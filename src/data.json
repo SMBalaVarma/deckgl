@@ -1,0 +1,368 @@
+{
+    "type": "FeatureCollection",
+    "features": [
+      {
+        "type": "Feature",
+        "id": 0,
+        "properties": {
+          "Code": "FRLA",
+          "Name": "Docks"
+        },
+        "geometry": {
+          "type": "Point",
+          "coordinates": [
+            -84.787114,
+            33.616678
+          ]
+        }
+      },
+      {
+        "type": "Feature",
+        "id": 1,
+        "properties": {
+          "Code": "FRLA",
+          "Name": "Wellness Homes"
+        },
+        "geometry": {
+          "type": "Point",
+          "coordinates": [
+            -84.801551,
+            33.604191
+          ]
+        }
+      },
+      {
+        "type": "Feature",
+        "id": 2,
+        "properties": {
+          "Code": "FRLA",
+          "Name": "Warehouses"
+        },
+        "geometry": {
+          "type": "Point",
+          "coordinates": [
+            -84.820147,
+            33.596159
+          ]
+        }
+      },
+      {
+        "type": "Feature",
+        "id": 3,
+        "properties": {
+          "Code": "FRLA",
+          "Name": "Greenhouse"
+        },
+        "geometry": {
+          "type": "Point",
+          "coordinates": [
+            -84.8189267,
+            33.5967545
+          ]
+        }
+      },
+      {
+        "type": "Feature",
+        "id": 4,
+        "properties": {
+          "Code": "FRLA",
+          "Name": "Docks"
+        },
+        "geometry": {
+          "type": "Point",
+          "coordinates": [
+            -84.787671,
+            33.612818
+          ]
+        }
+      },
+      {
+        "type": "Feature",
+        "id": 5,
+        "properties": {
+          "Code": "FRLA",
+          "Name": "Docks"
+        },
+        "geometry": {
+          "type": "Point",
+          "coordinates": [
+            -84.789560,
+            33.618858
+          ]
+        }
+      },
+      {
+        "type": "Feature",
+        "id": 6,
+        "properties": {
+          "Code": "GLDE",
+          "Name": "Amphitheatre"
+        },
+        "geometry": {
+          "type": "Point",
+          "coordinates": [
+            -84.792667,
+            33.619388
+          ]
+        }
+      },
+      {
+        "type": "Feature",
+        "id": 7,
+        "properties": {
+          "Code": "GLDE",
+          "Name": "Entrance, Parking & Retail"
+        },
+        "geometry": {
+          "type": "Point",
+          "coordinates": [
+            -84.801276,
+            33.620073
+          ]
+        }
+      },
+      {
+        "type": "Feature",
+        "id": 8,
+        "properties": {
+          "Code": "GLDE",
+          "Name": "Commercial office space"
+        },
+        "geometry": {
+          "type": "Point",
+          "coordinates": [
+            -84.803679,
+            33.620538
+          ]
+        }
+      },
+      {
+        "type": "Feature",
+        "id": 9,
+        "properties": {
+          "Code": "GLDE",
+          "Name": "Wellness Homes"
+        },
+        "geometry": {
+          "type": "Point",
+          "coordinates": [
+            -84.801426,
+            33.616339
+          ]
+        }
+      },
+      {
+        "type": "Feature",
+        "id": 10,
+        "properties": {
+          "Code": "GLDE",
+          "Name": "Wellness Center"
+        },
+        "geometry": {
+          "type": "Point",
+          "coordinates": [
+            -84.806805,
+            33.607543
+          ]
+        }
+      },
+      {
+        "type": "Feature",
+        "id": 11,
+        "properties": {
+          "Code": "GLDE",
+          "Name": "Wellness Ledge"
+        },
+        "geometry": {
+          "type": "Point",
+          "coordinates": [
+            -84.808210,
+            33.604576
+          ]
+        }
+      },
+      {
+        "type": "Feature",
+        "id": 12,
+        "properties": {
+          "Code": "GLDE",
+          "Name": "Meditation center"
+        },
+        "geometry": {
+          "type": "Point",
+          "coordinates": [
+            -84.803082,
+            33.608025
+          ]
+        }
+      },
+      {
+        "type": "Feature",
+        "id": 13,
+        "properties": {
+          "Code": "GLDE",
+          "Name": "Town Center"
+        },
+        "geometry": {
+          "type": "Point",
+          "coordinates": [
+            -84.804498,
+            33.609509
+          ]
+        }
+      },
+      {
+        "type": "Feature",
+        "id": 14,
+        "properties": {
+          "Code": "GLDE",
+          "Name": "Transient homes"
+        },
+        "geometry": {
+          "type": "Point",
+          "coordinates": [
+            -84.801837,
+            33.611742
+          ]
+        }
+      },
+      {
+        "type": "Feature",
+        "id": 15,
+        "properties": {
+          "Code": "GLDE",
+          "Name": "Wellness Homes"
+        },
+        "geometry": {
+          "type": "Point",
+          "coordinates": [
+            -84.791216,
+            33.612163
+          ]
+        }
+      },
+      {
+        "type": "Feature",
+        "id": 16,
+        "properties": {
+          "Code": "GLDE",
+          "Name": "Friut Plantation"
+        },
+        "geometry": {
+          "type": "Point",
+          "coordinates": [
+            -84.821218,
+            33.606788
+          ]
+        }
+      },
+      {
+        "type": "Feature",
+        "id": 17,
+        "properties": {
+          "Code": "GLDE",
+          "Name": "Koi House"
+        },
+        "geometry": {
+          "type": "Point",
+          "coordinates": [
+            -84.820531,
+            33.607503
+          ]
+        }
+      },
+      {
+        "type": "Feature",
+        "id": 18,
+        "properties": {
+          "Code": "GLDE",
+          "Name": "Koi House"
+        },
+        "geometry": {
+          "type": "Point",
+          "coordinates": [
+            -84.818514,
+            33.606431
+          ]
+        }
+      },
+      {
+        "type": "Feature",
+        "id": 19,
+        "properties": {
+          "Code": "GLDE",
+          "Name": "Wellness Homes"
+        },
+        "geometry": {
+          "type": "Point",
+          "coordinates": [
+            -84.816797,
+            33.608289
+          ]
+        }
+      },
+      {
+        "type": "Feature",
+        "id": 20,
+        "properties": {
+          "Code": "GLDE",
+          "Name": "Aesthetic and Anti-Aging-Center"
+        },
+        "geometry": {
+          "type": "Point",
+          "coordinates": [
+            -84.824222,
+            33.607575
+          ]
+        }
+      },
+      {
+        "type": "Feature",
+        "id": 21,
+        "properties": {
+          "Code": "GLDE",
+          "Name": "Polyhouses"
+        },
+        "geometry": {
+          "type": "Point",
+          "coordinates": [
+            -84.823063,
+            33.609505
+          ]
+        }
+      },
+      {
+        "type": "Feature",
+        "id": 22,
+        "properties": {
+          "Code": "GLDE",
+          "Name": "Polyhouses"
+        },
+        "geometry": {
+          "type": "Point",
+          "coordinates": [
+            -84.823063,
+            33.609505
+          ]
+        }
+      },
+      {
+        "type": "Feature",
+        "id": 23,
+        "properties": {
+          "Code": "GLDE",
+          "Name": "Global organic Store and Nutrition center"
+        },
+        "geometry": {
+          "type": "Point",
+          "coordinates": [
+            -84.825895,
+            33.606538
+          ]
+        }
+      }
+             
+            
+    ]
+  }
+
