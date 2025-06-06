@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import DeckGL, { IconLayer, GeoJsonLayer } from 'deck.gl';
+import DeckGL, { IconLayer, PathLayer } from 'deck.gl';
 import { FlyToInterpolator } from '@deck.gl/core';
 import { isMobile } from 'react-device-detect';
 import Map from 'react-map-gl/mapbox';
@@ -12,2252 +12,490 @@ const MAPBOX_TOKEN = 'pk.eyJ1IjoieGNoYW1wcyIsImEiOiJjbThlY3BzbWgwMDVrMmlzNWF0Z3B
 const MapStyle = 'mapbox://styles/mapbox/satellite-v9';
 const iconUrl = mapIcon;
 
+const CENTER_POINT = { latitude: 33.6095571, longitude: -84.8039517 };
+const MAX_RADIUS = 0.03;
+const BOUNDARY_COLOR = [255, 255, 255, 100];
+
 const INITIAL_VIEW_STATE = {
-  latitude: 33.6095571,
-  longitude: -84.8039517,
-  zoom: 3,
-  pitch: 60,
-  bearing: -30,
+  latitude: CENTER_POINT.latitude, longitude: CENTER_POINT.longitude, zoom: 3,
+  pitch: 60, bearing: -30, maxZoom: 20, minZoom: 1
 };
 
 function App() {
-  const [hoverInfo, setHoverInfo] = useState(null);
-  const [tooltipPos, setTooltipPos] = useState(null);
-  const [viewState, setViewState] = useState(INITIAL_VIEW_STATE); 
-  const deckRef = useRef();
-  const [selectedId, setSelectedId] = useState(null);
-  const clickedIdRef = useRef(null);
-  const pendingIdRef = useRef(null);
-  const canvasRef = useRef();
-  const mouseXRef = useRef(0); 
-  const mouseInfluenceRef = useRef({ x: 0, y: 0 });
-  const wrapperRef = useRef();
-  const [zoomDuration, setZoomDuration] = useState(5000);
-
-
-  // Smooth 3D motion: target pitch and bearing
-  const targetViewRef = useRef({ pitch: INITIAL_VIEW_STATE.pitch, bearing: INITIAL_VIEW_STATE.bearing });
-  const animationFrameRef = useRef();
-
-  // Initial zoom-in effect
-  const playInitialZoom = (duration) => {
-    const finalDuration = duration ?? zoomDuration ?? 5000;
-    setSelectedId(null);
-    setHoverInfo(null);
-    setViewState(prev => ({
-      ...prev,
-      longitude: INITIAL_VIEW_STATE.longitude, // Centered
-      latitude: INITIAL_VIEW_STATE.latitude,  // Centered
-      zoom: 14,
-      pitch: 70,
-      bearing: -20,
-      transitionDuration: finalDuration,
-      transitionInterpolator: new FlyToInterpolator()
-    }));
-  };
-  
-  useEffect(() => {
-    const timeout = setTimeout(() => {
-      playInitialZoom();
-    }, 300);
-    return () => clearTimeout(timeout);
-  }, []); 
-
-  // Tooltip screen position update
-  useEffect(() => {
-    if (hoverInfo && deckRef.current && deckRef.current.deck) {
-      const viewports = deckRef.current.deck.getViewports();
-      if (viewports && viewports.length > 0) {
-        const viewport = viewports[0];
-        const [x, y] = viewport.project([hoverInfo.longitude, hoverInfo.latitude]);
-        setTooltipPos({ x, y });
-      }
-    } else {
-      setTooltipPos(null);
-    }
-  }, [hoverInfo, viewState]);
-
-  // Smooth animation loop for pitch and bearing
-  useEffect(() => {
-    const smoothUpdate = () => {
-      setViewState(prev => {
-        const currentPitch = prev.pitch;
-        const currentBearing = prev.bearing;
-        const targetPitch = targetViewRef.current.pitch;
-        const targetBearing = targetViewRef.current.bearing;
-
-        const smoothFactor = 0.05;
-        const newPitch = currentPitch + (targetPitch - currentPitch) * smoothFactor;
-        const newBearing = currentBearing + (targetBearing - currentBearing) * smoothFactor;
-
-        return {
-          ...prev,
-          pitch: newPitch,
-          bearing: newBearing
-        };
-      });
-
-      animationFrameRef.current = requestAnimationFrame(smoothUpdate);
-    };
-
-    animationFrameRef.current = requestAnimationFrame(smoothUpdate);
-    return () => cancelAnimationFrame(animationFrameRef.current);
-  }, []);
-
-  // Mouse move handler to set target pitch/bearing
-  useEffect(() => {
-    const handleMouseMove = (e) => {
-      const x = e.clientX;
-      const y = e.clientY;
-      const { innerWidth, innerHeight } = window;
-  
-      const xNorm = (x / innerWidth) * 2 - 1;
-      const yNorm = (y / innerHeight) * 2 - 1;
-  
-      mouseInfluenceRef.current = { x: xNorm, y: yNorm };
-    };
-  
-    window.addEventListener('mousemove', handleMouseMove);
-    return () => window.removeEventListener('mousemove', handleMouseMove);
-  }, []);
-
-  useEffect(() => {
-    const animate = () => {
-      const { x, y } = mouseInfluenceRef.current;
-      const translateX = x * 10; // px to shift
-      const translateY = y * 10;
-  
-      if (wrapperRef.current) {
-        wrapperRef.current.style.transform = `translate(${translateX}px, ${translateY}px)`;
-      }
-  
-      requestAnimationFrame(animate);
-    };
-  
-    animate();
-  }, []);    
-
-  const layers = [
-    new IconLayer({
-      id: 'nationalParksIcons-' + selectedId,
-      data: NationalParksData.features,
-      pickable: true,
-      getPosition: d => {
-        const coords = d.geometry.coordinates;
-        return Array.isArray(coords[0]) ? coords[0] : coords;
-      },
-      getIcon: () => ({
-        url: iconUrl,
-        width: 143,
-        height: 143,
-        anchorY: 143
-      }),
-      sizeScale: 7,
-      getSize: d => (d.id === selectedId ? 10 : 5),
-      getColor: [255, 140, 0], 
-      onClick: info => {
-        if (info.object) {
-          const coords = info.coordinate || info.object.geometry.coordinates;
-          if (!coords || coords.length < 2) return;      
-          const [longitude, latitude] = coords;
-          const clickedId = info.object.id;      
-          pendingIdRef.current = clickedId;
-      
-          setHoverInfo({
-            name: info.object.properties.Name,
-            longitude,
-            latitude
-          });
-      
-          setViewState(prev => ({
-            ...prev,
-            longitude,
-            latitude,
-            zoom: Math.min(prev.zoom + 1, 16),
-            pitch: 75,
-            bearing: prev.bearing + 90,
-            transitionDuration: 2000,
-            transitionInterpolator: new FlyToInterpolator(),
-            onTransitionEnd: () => {
-              setSelectedId(pendingIdRef.current); 
-              setViewState(prev => ({
-                ...prev,
-                zoom: Math.min(prev.zoom + 1, 15.95),
-                transitionDuration: 500
-              }));             
-            }            
-          }));
-        } else {
-          setHoverInfo(null);
-          setSelectedId(null);
-        }
-      }
-             
-      
-    })
-  ];
-
-  return (
-    <div ref={wrapperRef} style={{ position: 'relative', width: '100%', height: '100vh', transition: 'transform 0.5s ease'  }}>
-      <canvas
-        ref={canvasRef}
-        style={{
-          position: 'absolute',
-          top: 0,
-          left: 0,
-          width: '100%',
-          height: '100vh',
-          zIndex: 9, // Behind everything
-          pointerEvents: 'none'
-        }}
-      />
-      <DeckGL
-        ref={deckRef}
-        viewState={viewState}
-        controller={{ 
-          dragMode: 'rotate',
-          inertia: true, 
-          scrollZoom: false,
-          touchZoom: false,
-          doubleClickZoom: false,
-          keyboard: false
-        }}
-        layers={layers}
-        onViewStateChange={({ viewState, interactionState }) => {
-          setViewState(viewState);
-        
-          // While dragging
-          if (interactionState.isDragging) {
-            cancelAnimationFrame(animationFrameRef.current); // stop auto-rotation
-            targetViewRef.current = {
-              pitch: viewState.pitch,
-              bearing: viewState.bearing
-            };
-          }
-        
-          // When drag ends
-          if (!interactionState.isDragging && !animationFrameRef.current) {
-            // Delay reactivation to make transition smooth
-            setTimeout(() => {
-              animationFrameRef.current = requestAnimationFrame(() => {
-                const smoothUpdate = () => {
-                  setViewState(prev => {
-                    const currentPitch = prev.pitch;
-                    const currentBearing = prev.bearing;
-                    const targetPitch = targetViewRef.current.pitch;
-                    const targetBearing = targetViewRef.current.bearing;
-        
-                    const smoothFactor = isMobile ? 0.01 : 0.15;
-                    const newPitch = currentPitch + (targetPitch - currentPitch) * smoothFactor;
-                    const newBearing = currentBearing + (targetBearing - currentBearing) * smoothFactor;
-        
-                    return {
-                      ...prev,
-                      pitch: newPitch,
-                      bearing: newBearing
-                    };
-                  });
-        
-                  animationFrameRef.current = requestAnimationFrame(smoothUpdate);
-                };
-                smoothUpdate();
-              });
-            }, 300); // Add 300ms delay before resuming animation
-          }
-        }}
-              
-        onClick={info => {
-          if (!info.object) {
-            setHoverInfo(null);
-          }
-        }}        
-      >
-        <Map
-          mapboxAccessToken={MAPBOX_TOKEN}
-          mapStyle={MapStyle}
-        />
-      </DeckGL>
-
-      {/* Tooltip */}
-      {hoverInfo && tooltipPos && (
-        <div
-          className="tooltip tooltip-visible tooltip-animate"
-          style={{
-            top: '50%',
-            left: '50%',
-            transform: 'translate(-50%, -50%)'
-          }}
-        >
-          <strong>{hoverInfo.name}</strong>
-          <a href='#' target='_blank' style={{ color: '#fff', display: 'block' }}>Discover</a>
-        </div>
-      )}
-      <div className='live-back-btns'>
-        <ul>
-        <li><a href="#" onClick={(e) => { 
-            e.preventDefault(); 
-            setSelectedId(null); 
-            setHoverInfo(null);
-            playInitialZoom(1000); 
-          }}><img src={mapRevertIcon} alt="Map" /></a></li>
-          <li><a href="#" target='_blank'><img src={liveTrackIcon} alt="Live Track" /></a></li>
-        </ul>
-      </div>
-
-      {/* Tooltip CSS */}
-      <style>{`
-        body {
-          overflow:hidden;
-          font-family: 'Montserrat', sans-serif;
-        }
-        .live-back-btns {
-          position: absolute;
-          top: 20px;
-          right: 20px;
-          z-index: 9999;          
-        }
-        .live-back-btns ul {
-          display: flex;
-          gap: 25px;
-        }
-        .live-back-btns ul li {
-          list-style: none;
-          padding: 0;
-          margin: 0;          
-        }        
-        .tooltip {
-          position: absolute;          
-          pointer-events: auto;
-          background: rgba(255,255,255, 0.12);
-          padding: 20px 38px;
-          border-radius: 6px;
-          box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
-          transform: translate(-50%, -120%) scale(0.5);
-          opacity: 0;
-          transition: opacity 0.4s ease, transform 0.4s ease;
-          z-index: 10;
-          text-align: center;
-        }
-        .tooltip strong {
-          color:#fff;
-          font-size: 42px;
-          line-height: 46px;
-        }
-        .tooltip a {
-          font-size: 20px;
-          line-height: 24px;
-          color: #fff;
-          text-decoration: underline;
-        }
-        .tooltip-visible {
-          opacity: 1;
-          transform: translate(-30%, -250%) scale(1);
-        }
-          .tooltip-animate {
-          animation: fadeInUp 0.4s ease-out;
-        }
-
-        @keyframes fadeInUp {
-          0% {
-            opacity: 0;
-            transform: translateY(10px);
-          }
-          100% {
-            opacity: 1;
-            transform: translateY(0);
-          }
-        }
-        @media only screen and (max-width: 992px) {
-          .tooltip {
-            padding: 10px 20px;
-            background: rgba(255,255,255, 0.2);
-          }
-          .tooltip strong {
-            font-size: 30px;
-            line-height: 34px;
-          }
-          .tooltip a {
-            font-size: 16px;
-            line-height: 20px;
-          }
-        }
-        @media only screen and (max-width: 767px) {
-          .tooltip strong {
-            font-size: 16px;
-            line-height: 20px;
-          }
-          .tooltip a {
-            font-size: 14px;
-            line-height: 18px;
-          }
-        }
-
-      `}</style>
-    </div>
-  );
-}
-
-export default App;
-
-
-
-
-import React, { useState, useEffect, useRef } from 'react';
-import DeckGL, { IconLayer, GeoJsonLayer } from 'deck.gl';
-import { FlyToInterpolator } from '@deck.gl/core';
-import { isMobile } from 'react-device-detect';
-import Map from 'react-map-gl/mapbox';
-import NationalParksData from './data.json';
-import mapIcon from './gold-pointer.png';
-import mapRevertIcon from './map-revert.png';
-import liveTrackIcon from './livetrack.png';
-
-const MAPBOX_TOKEN = 'pk.eyJ1IjoieGNoYW1wcyIsImEiOiJjbThlY3BzbWgwMDVrMmlzNWF0Z3BpNGpzIn0.SeVutB4KYQcAvRvoQC3DCg';
-const MapStyle = 'mapbox://styles/mapbox/satellite-v9';
-const iconUrl = mapIcon;
-
-// Initial view state adjusted for better initial display
-const INITIAL_VIEW_STATE = {
-  latitude: 33.6095571,
-  longitude: -84.8039517,
-  zoom: 3.5,
-  pitch: 60,
-  bearing: -30,
-  maxZoom: 20,
-  minZoom: 1
-};
-
-function App() {
-  const [hoverInfo, setHoverInfo] = useState(null);
-  const [tooltipPos, setTooltipPos] = useState(null);
-  const [viewState, setViewState] = useState(INITIAL_VIEW_STATE); 
-  const deckRef = useRef();
-  const [selectedId, setSelectedId] = useState(null);
-  const clickedIdRef = useRef(null);
-  const pendingIdRef = useRef(null);
-  const canvasRef = useRef();
-  const mouseXRef = useRef(0); 
-  const mouseInfluenceRef = useRef({ x: 0, y: 0 });
-  const wrapperRef = useRef();
-  const [zoomDuration, setZoomDuration] = useState(5000);
-  
-  // Drag state tracking
-  const [isDragging, setIsDragging] = useState(false);
-  const dragStartRef = useRef({ x: 0, y: 0 });
-  const dragPrevRef = useRef({ x: 0, y: 0 });
-  const dragVelocityRef = useRef({ x: 0, y: 0 });
-  const dampenedVelocityRef = useRef({ x: 0, y: 0 });
-
-  // Smooth 3D motion: target pitch and bearing
-  const targetViewRef = useRef({ pitch: INITIAL_VIEW_STATE.pitch, bearing: INITIAL_VIEW_STATE.bearing });
-  const animationFrameRef = useRef();
-  const prevViewStateRef = useRef(null);
-  const isDraggingRef = useRef(false);
-  const leftDragVelocityRef = useRef({ x: 0, y: 0 });
-
-  // NEW: Add ambient mouse movement settings
-  const [ambientMovementEnabled, setAmbientMovementEnabled] = useState(true);
-  const ambientInfluenceRef = useRef({ x: 0, y: 0 });
-
-  const targetPositionRef = useRef({
-    latitude: INITIAL_VIEW_STATE.latitude,
-    longitude: INITIAL_VIEW_STATE.longitude
-  });
-  
-  useEffect(() => {
-    // Initialize position refs
-    targetPositionRef.current = {
-      latitude: INITIAL_VIEW_STATE.latitude,
-      longitude: INITIAL_VIEW_STATE.longitude
-    };
-    
-    const timeout = setTimeout(() => {
-      playInitialZoom();
-    }, 300);
-    return () => clearTimeout(timeout);
-  }, []);
-  
-  const positionInfluenceRef = useRef({ x: 0, y: 0 });
-  
-  // Fix: Initialize all smoothnessSettings properties with default values
-  const [smoothnessSettings, setSmoothnessSettings] = useState({
-    friction: 0.9,
-    sensitivity: 1.0,
-    leftDampingFactor: 0.92,  // Increased for smoother deceleration after drag
-    leftDragSensitivity: 0.05, // Added control for left drag sensitivity
-    leftSmoothFactor: 0.1,
-    ambientStrength: 0.04,      // How strong the ambient effect is
-    ambientMaxPitch: 90,         // Maximum pitch deviation from center
-    ambientMaxBearing: 90,      // Maximum bearing deviation from center
-    ambientSmoothness: 0.95,     // How smoothly it transitions (higher = smoother)
-    ambientMaxLatOffset: 0.1, // Maximum latitude offset in degrees
-    ambientMaxLngOffset: 0.1, // Maximum longitude offset in degrees
-  });
-
-  // Initial zoom-in effect
-  const playInitialZoom = (duration) => {
-    const finalDuration = duration ?? zoomDuration ?? 5000;
-    setSelectedId(null);
-    setHoverInfo(null);
-    
-    // Reset target position
-    targetPositionRef.current = {
-      latitude: INITIAL_VIEW_STATE.latitude,
-      longitude: INITIAL_VIEW_STATE.longitude
-    };
-    
-    setViewState(prev => ({
-      ...prev,
-      longitude: INITIAL_VIEW_STATE.longitude,
-      latitude: INITIAL_VIEW_STATE.latitude,
-      zoom: 14,
-      pitch: 70,
-      bearing: -20,
-      transitionDuration: finalDuration,
-      transitionInterpolator: new FlyToInterpolator()
-    }));
-  };
-  
-  useEffect(() => {
-    const timeout = setTimeout(() => {
-      playInitialZoom();
-    }, 300);
-    return () => clearTimeout(timeout);
-  }, []); 
-
-  // Tooltip screen position update
-  useEffect(() => {
-    if (hoverInfo && deckRef.current && deckRef.current.deck) {
-      const viewports = deckRef.current.deck.getViewports();
-      if (viewports && viewports.length > 0) {
-        const viewport = viewports[0];
-        const [x, y] = viewport.project([hoverInfo.longitude, hoverInfo.latitude]);
-        setTooltipPos({ x, y });
-      }
-    } else {
-      setTooltipPos(null);
-    }
-  }, [hoverInfo, viewState]);
-    
-  // Smooth animation loop for pitch, bearing, and position
-  useEffect(() => {
-    const smoothUpdate = () => {
-      setViewState(prev => {
-        const currentPitch = prev.pitch;
-        const currentBearing = prev.bearing;
-        const currentLatitude = prev.latitude;
-        const currentLongitude = prev.longitude;
-        
-        // Get target values
-        let targetPitch = targetViewRef.current.pitch;
-        let targetBearing = targetViewRef.current.bearing;
-        let targetLatitude = targetPositionRef.current.latitude;
-        let targetLongitude = targetPositionRef.current.longitude;
-        
-        // Store current state for velocity calculation
-        if (!prevViewStateRef.current) {
-          prevViewStateRef.current = { 
-            bearing: currentBearing, 
-            pitch: currentPitch,
-            latitude: currentLatitude,
-            longitude: currentLongitude
-          };
-        }
-    
-        let newBearing = currentBearing;
-        let newPitch = currentPitch;
-        let newLatitude = currentLatitude;
-        let newLongitude = currentLongitude;
-      
-        if (isDraggingRef.current) {
-          // During left-click drag, DeckGL handles the direct movement
-          // We just need to track the changes for later inertia
-          const bearingDelta = currentBearing - prevViewStateRef.current.bearing;
-          const pitchDelta = currentPitch - prevViewStateRef.current.pitch;
-          const latDelta = currentLatitude - prevViewStateRef.current.latitude;
-          const lngDelta = currentLongitude - prevViewStateRef.current.longitude;
-          
-          leftDragVelocityRef.current = {
-            bearing: bearingDelta,
-            pitch: pitchDelta,
-            latitude: latDelta,
-            longitude: lngDelta
-          };
-          
-          // Update for next frame
-          newBearing = currentBearing;
-          newPitch = currentPitch;
-          newLatitude = currentLatitude;
-          newLongitude = currentLongitude;
-          
-          // Update target positions to match current (since user is manually dragging)
-          targetPositionRef.current = {
-            latitude: currentLatitude,
-            longitude: currentLongitude
-          };
-          
-          targetViewRef.current = {
-            bearing: currentBearing,
-            pitch: currentPitch
-          };
-        }
-        else {
-          // Not actively dragging - apply inertia or smooth return to target
-          
-          // First apply any left-click inertia if significant
-          if (Math.abs(leftDragVelocityRef.current.bearing) > 0.001 || 
-              Math.abs(leftDragVelocityRef.current.pitch) > 0.001 ||
-              Math.abs(leftDragVelocityRef.current.latitude) > 0.00001 ||
-              Math.abs(leftDragVelocityRef.current.longitude) > 0.00001) {
-            
-            // Apply inertia with damping
-            newBearing = currentBearing + leftDragVelocityRef.current.bearing;
-            newPitch = Math.max(0, Math.min(85, currentPitch + leftDragVelocityRef.current.pitch));
-            newLatitude = currentLatitude + leftDragVelocityRef.current.latitude;
-            newLongitude = currentLongitude + leftDragVelocityRef.current.longitude;
-            
-            // Apply progressive damping to gradually reduce velocity - smoother deceleration
-            leftDragVelocityRef.current = {
-              bearing: leftDragVelocityRef.current.bearing * smoothnessSettings.leftDampingFactor,
-              pitch: leftDragVelocityRef.current.pitch * smoothnessSettings.leftDampingFactor,
-              latitude: leftDragVelocityRef.current.latitude * smoothnessSettings.leftDampingFactor,
-              longitude: leftDragVelocityRef.current.longitude * smoothnessSettings.leftDampingFactor
-            };
-            
-            // Update the target to match our inertia-affected position
-            targetViewRef.current = {
-              bearing: newBearing,
-              pitch: newPitch
-            };
-            targetPositionRef.current = {
-              latitude: newLatitude,
-              longitude: newLongitude
-            };
-          }
-          // Apply ambient mouse movement if enabled and no active inertia
-          else if (ambientMovementEnabled) {
-            // Calculate base values (what we'd center around)
-            const basePitch = targetViewRef.current.pitch;
-            const baseBearing = targetViewRef.current.bearing;
-            const baseLatitude = targetPositionRef.current.latitude;
-            const baseLongitude = targetPositionRef.current.longitude;
-            
-            // Apply ambient influence based on mouse position
-            // Use ambientInfluence which is smoothed over time from mouseInfluence
-            const pitchInfluence = ambientInfluenceRef.current.y * smoothnessSettings.ambientMaxPitch;
-            const bearingInfluence = ambientInfluenceRef.current.x * smoothnessSettings.ambientMaxBearing;
-            const latInfluence = ambientInfluenceRef.current.y * smoothnessSettings.ambientMaxLatOffset;
-            const lngInfluence = ambientInfluenceRef.current.x * smoothnessSettings.ambientMaxLngOffset;
-            
-            // Calculate new target including ambient influence
-            const ambientTargetPitch = Math.max(0, Math.min(85, basePitch + pitchInfluence));
-            const ambientTargetBearing = baseBearing + bearingInfluence;
-            const ambientTargetLatitude = baseLatitude + latInfluence;
-            const ambientTargetLongitude = baseLongitude + lngInfluence;
-            
-            // Smooth transition to the new target
-            const smoothFactor = smoothnessSettings.leftSmoothFactor;
-            newPitch = currentPitch + (ambientTargetPitch - currentPitch) * smoothFactor;
-            newBearing = currentBearing + (ambientTargetBearing - currentBearing) * smoothFactor;
-            newLatitude = currentLatitude + (ambientTargetLatitude - currentLatitude) * smoothFactor;
-            newLongitude = currentLongitude + (ambientTargetLongitude - currentLongitude) * smoothFactor;
-          }
-          // Finally, if no ambient and no significant inertia, smooth return to target
-          else {
-            const smoothFactor = smoothnessSettings.leftSmoothFactor;
-            newPitch = currentPitch + (targetPitch - currentPitch) * smoothFactor;
-            newBearing = currentBearing + (targetBearing - currentBearing) * smoothFactor;
-            newLatitude = currentLatitude + (targetLatitude - currentLatitude) * smoothFactor;
-            newLongitude = currentLongitude + (targetLongitude - currentLongitude) * smoothFactor;
-          }
-        }
-        
-        // Update previous state for next frame velocity calculation
-        prevViewStateRef.current = { 
-          bearing: currentBearing, 
-          pitch: currentPitch,
-          latitude: currentLatitude,
-          longitude: currentLongitude
-        };
-        
-        return {
-          ...prev,
-          pitch: newPitch,
-          bearing: newBearing,
-          latitude: newLatitude,
-          longitude: newLongitude
-        };
-      });
-    
-      animationFrameRef.current = requestAnimationFrame(smoothUpdate);
-    };
-
-    animationFrameRef.current = requestAnimationFrame(smoothUpdate);
-    return () => cancelAnimationFrame(animationFrameRef.current);
-  }, [isDragging, smoothnessSettings, ambientMovementEnabled]);
-
-  // Mouse move handler to set target pitch/bearing
-  useEffect(() => {
-    const handleMouseMove = (e) => {
-      const x = e.clientX;
-      const y = e.clientY;
-      const { innerWidth, innerHeight } = window;
-  
-      // Track mouse position for ambient effects
-      // Normalize to -1 to 1 range, where (0,0) is center
-      const xNorm = (x / innerWidth) * 2 - 1;
-      const yNorm = (y / innerHeight) * 2 - 1;
-      
-      // Store raw mouse influence
-      mouseInfluenceRef.current = { x: xNorm, y: yNorm };
-      
-      // Smoothly update ambient influence (for subtle camera movement)
-      ambientInfluenceRef.current = {
-        x: ambientInfluenceRef.current.x * smoothnessSettings.ambientSmoothness + 
-           xNorm * smoothnessSettings.ambientStrength * (1 - smoothnessSettings.ambientSmoothness),
-        y: ambientInfluenceRef.current.y * smoothnessSettings.ambientSmoothness + 
-           yNorm * smoothnessSettings.ambientStrength * (1 - smoothnessSettings.ambientSmoothness)
-      };
-      
-      // While dragging, calculate velocity for inertia
-      if (isDragging) {
-        // Calculate movement since last position
-        const deltaX = x - dragPrevRef.current.x;
-        const deltaY = y - dragPrevRef.current.y;
-        
-        // Update velocity based on movement
-        dragVelocityRef.current = {
-          x: deltaX * smoothnessSettings.leftDragSensitivity,
-          y: deltaY * smoothnessSettings.leftDragSensitivity
-        };
-        
-        // Apply smoothing to velocity for more natural feel
-        dampenedVelocityRef.current = {
-          x: dampenedVelocityRef.current.x * 0.7 + dragVelocityRef.current.x * 0.3,
-          y: dampenedVelocityRef.current.y * 0.7 + dragVelocityRef.current.y * 0.3
-        };
-        
-        // Update for next movement calculation
-        dragPrevRef.current = { x, y };
-      }
-    };
-  
-    window.addEventListener('mousemove', handleMouseMove);
-    return () => window.removeEventListener('mousemove', handleMouseMove);
-  }, [isDragging, smoothnessSettings]);
-
-  // Handle mouse down/up events
-  useEffect(() => {
-    const handleMouseDown = (e) => {
-      // Only handle left mouse button (button === 0)
-      if (e.button === 0) { 
-        // Don't set dragging state here - DeckGL will handle it
-        dragStartRef.current = { x: e.clientX, y: e.clientY };
-        dragPrevRef.current = { x: e.clientX, y: e.clientY };
-        
-        // Reset velocity when starting a new drag
-        dampenedVelocityRef.current = { x: 0, y: 0 };
-      }
-    };
-    
-    window.addEventListener('mousedown', handleMouseDown);
-    
-    return () => {
-      window.removeEventListener('mousedown', handleMouseDown);
-    };
-  }, []);
-
-  // Add viewport meta tag for mobile devices
-  useEffect(() => {
-    let meta = document.querySelector('meta[name="viewport"]');
-    if (!meta) {
-      meta = document.createElement('meta');
-      meta.name = 'viewport';
-      meta.content = 'width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no';
-      document.getElementsByTagName('head')[0].appendChild(meta);
-    }
-  }, []);   
-
-  const layers = [
-    new IconLayer({
-      id: 'nationalParksIcons-' + selectedId,
-      data: NationalParksData.features,
-      pickable: true,
-      getPosition: d => {
-        const coords = d.geometry.coordinates;
-        return Array.isArray(coords[0]) ? coords[0] : coords;
-      },
-      getIcon: () => ({
-        url: iconUrl,
-        width: 143,
-        height: 143,
-        anchorY: 143
-      }),
-      sizeScale: 7,
-      getSize: d => (d.id === selectedId ? 10 : 5),
-      getColor: [255, 140, 0], 
-      onClick: info => {
-        if (info.object) {
-          const coords = info.coordinate || info.object.geometry.coordinates;
-          if (!coords || coords.length < 2) return;      
-          const [longitude, latitude] = coords;
-          const clickedId = info.object.id;      
-          pendingIdRef.current = clickedId;
-      
-          setHoverInfo({
-            name: info.object.properties.Name,
-            longitude,
-            latitude
-          });
-      
-          setViewState(prev => ({
-            ...prev,
-            longitude,
-            latitude,
-            zoom: Math.min(prev.zoom + 1, 16),
-            pitch: 75,
-            bearing: prev.bearing + 90,
-            transitionDuration: 2000,
-            transitionInterpolator: new FlyToInterpolator(),
-            onTransitionEnd: () => {
-              setSelectedId(pendingIdRef.current); 
-              setViewState(prev => ({
-                ...prev,
-                zoom: Math.min(prev.zoom + 1, 15.95),
-                transitionDuration: 500
-              }));             
-            }            
-          }));
-        } else {
-          setHoverInfo(null);
-          setSelectedId(null);
-        }
-      }
-    })
-  ];
-
-  return (
-    <div 
-      ref={wrapperRef} 
-      style={{ 
-        position: 'relative', 
-        width: '100vw', 
-        height: '100vh', 
-        margin: 0,
-        padding: 0,
-        overflow: 'hidden',
-        cursor: isDragging ? 'grabbing' : 'default'
-      }}
-    >
-      <canvas
-        ref={canvasRef}
-        style={{
-          position: 'absolute',
-          top: 0,
-          left: 0,
-          width: '100vw',
-          height: '100vh',
-          zIndex: 9, // Behind everything
-          pointerEvents: 'none'
-        }}
-      />
-      <DeckGL
-        ref={deckRef}
-        viewState={viewState}
-        controller={{ 
-          dragMode: 'rotate',      // Keep rotate mode for the drag controls
-          inertia: false,          // Disable DeckGL inertia to handle it ourselves
-          scrollZoom: false,
-          touchZoom: false,
-          doubleClickZoom: false,
-          keyboard: false
-        }}
-        layers={layers}
-        width="100%"
-        height="100%"
-        style={{position: 'absolute', left: 0, top: 0, cursor: isDragging ? 'grabbing' : 'grab'}}
-        onViewStateChange={({ viewState, interactionState }) => {
-          setViewState(viewState);
-          
-          // Track dragging state for our reference and UI
-          isDraggingRef.current = interactionState.isDragging;
-          setIsDragging(interactionState.isDragging);
-          
-          // When dragging starts/continues
-          if (interactionState.isDragging) {
-            // Update the target position to match current drag position
-            targetPositionRef.current = {
-              latitude: viewState.latitude,
-              longitude: viewState.longitude
-            };
-            
-            // Update the target view for pitch/bearing
-            targetViewRef.current = {
-              pitch: viewState.pitch,
-              bearing: viewState.bearing
-            };
-          }
-          
-          // When drag ends
-          if (!interactionState.isDragging && prevViewStateRef.current) {
-            // Calculate final velocities for inertial movement
-            const bearingDelta = viewState.bearing - prevViewStateRef.current.bearing;
-            const pitchDelta = viewState.pitch - prevViewStateRef.current.pitch;
-            const latDelta = viewState.latitude - prevViewStateRef.current.latitude;
-            const lngDelta = viewState.longitude - prevViewStateRef.current.longitude;
-            
-            // Set velocities for smooth continuation
-            leftDragVelocityRef.current = {
-              bearing: bearingDelta * 0.8, // Reduce initial velocity slightly for smoother transition
-              pitch: pitchDelta * 0.8,
-              latitude: latDelta * 0.8,
-              longitude: lngDelta * 0.8
-            };
-            
-            // Update the target position for eventual smooth return
-            targetPositionRef.current = {
-              latitude: viewState.latitude,
-              longitude: viewState.longitude
-            };
-            
-            // Update target view for eventual smooth return
-            targetViewRef.current = {
-              pitch: viewState.pitch,
-              bearing: viewState.bearing
-            };
-          }
-        }}
-              
-        onClick={info => {
-          if (!info.object) {
-            setHoverInfo(null);
-          }
-        }}        
-      >
-        <Map
-          mapboxAccessToken={MAPBOX_TOKEN}
-          mapStyle={MapStyle}
-          width="100%"
-          height="100%"
-        />
-      </DeckGL>
-
-      <div className="camera-controls-indicator" style={{ 
-        position: 'absolute', 
-        bottom: '20px', 
-        left: '20px', 
-        color: 'white', 
-        background: 'rgba(0,0,0,0.5)', 
-        padding: '10px', 
-        borderRadius: '5px',
-        opacity: isDragging ? 1 : 0,
-        transition: 'opacity 0.3s ease'
-      }}>
-        Left-click drag: Camera control
-      </div>
-
-      {/* Smoothness controls (can be hidden in production) */}
-      <div className="smoothness-controls" style={{
-        position: 'absolute',
-        bottom: '20px',
-        right: '20px',
-        background: 'rgba(0,0,0,0.7)',
-        padding: '15px',
-        color: 'white',
-        borderRadius: '8px',
-        zIndex: 1000,
-        maxWidth: '300px',
-        fontSize: '12px',
-        display: isMobile ? 'none' : 'block' // Hide on mobile
-      }}>
-        <h4 style={{margin: '0 0 10px 0', fontSize: '14px'}}>Camera Smoothness Controls</h4>
-        
-        {/* Toggle for ambient movement */}
-        <div style={{marginBottom: '8px'}}>
-          <label style={{display: 'flex', alignItems: 'center', marginBottom: '5px'}}>
-            <input
-              type="checkbox"
-              checked={ambientMovementEnabled}
-              onChange={(e) => setAmbientMovementEnabled(e.target.checked)}
-              style={{marginRight: '8px'}}
-            />
-            Enable Mouse-Based Camera Movement
-          </label>
-        </div>
-
-        {/* Only show ambient controls if enabled */}
-        {ambientMovementEnabled && (
-          <>
-            <div style={{marginBottom: '8px'}}>
-              <label style={{display: 'block', marginBottom: '2px'}}>
-                Ambient Strength: {smoothnessSettings.ambientStrength.toFixed(2)}
-              </label>
-              <input
-                type="range"
-                min="0.01"
-                max="0.1"
-                step="0.01"
-                value={smoothnessSettings.ambientStrength}
-                onChange={(e) => setSmoothnessSettings({
-                  ...smoothnessSettings,
-                  ambientStrength: parseFloat(e.target.value)
-                })}
-              />
-            </div>
-            
-            <div style={{marginBottom: '8px'}}>
-              <label style={{display: 'block', marginBottom: '2px'}}>
-                Max Pitch Effect: {smoothnessSettings.ambientMaxPitch.toFixed(1)}°
-              </label>
-              <input
-                type="range"
-                min="1"
-                max="15"
-                step="0.5"
-                value={smoothnessSettings.ambientMaxPitch}
-                onChange={(e) => setSmoothnessSettings({
-                  ...smoothnessSettings,
-                  ambientMaxPitch: parseFloat(e.target.value)
-                })}
-              />
-            </div>
-            
-            <div style={{marginBottom: '8px'}}>
-              <label style={{display: 'block', marginBottom: '2px'}}>
-                Max Bearing Effect: {smoothnessSettings.ambientMaxBearing.toFixed(1)}°
-              </label>
-              <input
-                type="range"
-                min="2"
-                max="20"
-                step="1"
-                value={smoothnessSettings.ambientMaxBearing}
-                onChange={(e) => setSmoothnessSettings({
-                  ...smoothnessSettings,
-                  ambientMaxBearing: parseFloat(e.target.value)
-                })}
-              />
-            </div>
-
-            <div style={{marginBottom: '8px'}}>
-              <label style={{display: 'block', marginBottom: '2px'}}>
-                Max Latitude Offset: {smoothnessSettings.ambientMaxLatOffset.toFixed(2)}°
-              </label>
-              <input
-                type="range"
-                min="0.01"
-                max="1"
-                step="0.05"
-                value={smoothnessSettings.ambientMaxLatOffset}
-                onChange={(e) => setSmoothnessSettings({
-                  ...smoothnessSettings,
-                  ambientMaxLatOffset: parseFloat(e.target.value)
-                })}
-              />
-            </div>
-
-            <div style={{marginBottom: '8px'}}>
-              <label style={{display: 'block', marginBottom: '2px'}}>
-                Max Longitude Offset: {smoothnessSettings.ambientMaxLngOffset.toFixed(2)}°
-              </label>
-              <input
-                type="range"
-                min="0.01"
-                max="1"
-                step="0.05"
-                value={smoothnessSettings.ambientMaxLngOffset}
-                onChange={(e) => setSmoothnessSettings({
-                  ...smoothnessSettings,
-                  ambientMaxLngOffset: parseFloat(e.target.value)
-                })}
-              />
-            </div>
-
-            <div style={{marginBottom: '8px'}}>
-              <label style={{display: 'block', marginBottom: '2px'}}>
-                Smoothness: {smoothnessSettings.ambientSmoothness.toFixed(2)}
-              </label>
-              <input
-                type="range"
-                min="0.8"
-                max="0.99"
-                step="0.01"
-                value={smoothnessSettings.ambientSmoothness}
-                onChange={(e) => setSmoothnessSettings({
-                  ...smoothnessSettings,
-                  ambientSmoothness: parseFloat(e.target.value)
-                })}
-              />
-            </div>
-          </>
-        )}
-        
-        <div style={{marginBottom: '8px'}}>
-          <label style={{display: 'block', marginBottom: '2px'}}>
-            Drag Damping: {smoothnessSettings.leftDampingFactor.toFixed(2)}
-          </label>
-          <input
-            type="range"
-            min="0.8"
-            max="0.99"
-            step="0.01"
-            value={smoothnessSettings.leftDampingFactor}
-            onChange={(e) => setSmoothnessSettings({
-              ...smoothnessSettings,
-              leftDampingFactor: parseFloat(e.target.value)
-            })}
-          />
-        </div>
-        
-        <div style={{marginBottom: '8px'}}>
-          <label style={{display: 'block', marginBottom: '2px'}}>
-            Drag Sensitivity: {smoothnessSettings.leftDragSensitivity.toFixed(2)}
-          </label>
-          <input
-            type="range"
-            min="0.01"
-            max="0.2"
-            step="0.01"
-            value={smoothnessSettings.leftDragSensitivity}
-            onChange={(e) => setSmoothnessSettings({
-              ...smoothnessSettings,
-              leftDragSensitivity: parseFloat(e.target.value)
-            })}
-          />
-        </div>
-      </div>
-
-      {/* Tooltip */}
-      {hoverInfo && tooltipPos && (
-        <div
-          className="tooltip tooltip-visible tooltip-animate"
-          style={{
-            top: '50%',
-            left: '50%',
-            transform: 'translate(-50%, -50%)'
-          }}
-        >
-          <strong>{hoverInfo.name}</strong>
-          <a href='#' target='_blank' style={{ color: '#fff', display: 'block' }}>Discover</a>
-        </div>
-      )}
-      <div className='live-back-btns'>
-        <ul>
-        <li><a href="#" onClick={(e) => { 
-            e.preventDefault(); 
-            setSelectedId(null); 
-            setHoverInfo(null);
-            playInitialZoom(1000); 
-          }}><img src={mapRevertIcon} alt="Map" /></a></li>
-          <li><a href="#" target='_blank'><img src={liveTrackIcon} alt="Live Track" /></a></li>
-        </ul>
-      </div>
-
-      {/* Tooltip CSS */}
-      <style>{`
-        body, html {
-          margin: 0;
-          padding: 0;
-          overflow: hidden;
-          width: 100%;
-          height: 100%;
-          position: fixed; /* Add this */
-        }
-
-        #root {
-          width: 100%;
-          height: 100%;
-          overflow: hidden;
-          position: fixed; /* Add this */
-        }
-        .live-back-btns {
-          position: absolute;
-          top: 20px;
-          right: 20px;
-          z-index: 9999;          
-        }
-        .live-back-btns ul {
-          display: flex;
-          gap: 25px;
-          margin: 0;
-          padding: 0;
-        }
-        .live-back-btns ul li {
-          list-style: none;
-          padding: 0;
-          margin: 0;          
-        }        
-        .tooltip {
-          position: absolute;          
-          pointer-events: auto;
-          background: rgba(255,255,255, 0.12);
-          padding: 20px 38px;
-          border-radius: 6px;
-          box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
-          transform: translate(-50%, -120%) scale(0.5);
-          opacity: 0;
-          transition: opacity 0.4s ease, transform 0.4s ease;
-          z-index: 10;
-          text-align: center;
-        }
-        .tooltip strong {
-          color:#fff;
-          font-size: 42px;
-          line-height: 46px;
-        }
-        .tooltip a {
-          font-size: 20px;
-          line-height: 24px;
-          color: #fff;
-          text-decoration: underline;
-        }
-        .tooltip-visible {
-          opacity: 1;
-          transform: translate(-30%, -250%) scale(1);
-        }
-          .tooltip-animate {
-          animation: fadeInUp 0.4s ease-out;
-        }
-
-        @keyframes fadeInUp {
-          0% {
-            opacity: 0;
-            transform: translateY(10px);
-          }
-          100% {
-            opacity: 1;
-            transform: translateY(0);
-          }
-        }
-        @media only screen and (max-width: 992px) {
-          .tooltip {
-            padding: 10px 20px;
-            background: rgba(255,255,255, 0.2);
-          }
-          .tooltip strong {
-            font-size: 30px;
-            line-height: 34px;
-          }
-          .tooltip a {
-            font-size: 16px;
-            line-height: 20px;
-          }
-        }
-        @media only screen and (max-width: 767px) {
-          .tooltip strong {
-            font-size: 16px;
-            line-height: 20px;
-          }
-          .tooltip a {
-            font-size: 14px;
-            line-height: 18px;
-          }
-        }
-
-      `}</style>
-    </div>
-  );
-}
-
-export default App;
-
-
-
-
-
-
-
-
-import React, { useState, useEffect, useRef } from 'react';
-import DeckGL, { IconLayer } from 'deck.gl';
-import { FlyToInterpolator } from '@deck.gl/core';
-import { isMobile } from 'react-device-detect';
-import Map from 'react-map-gl/mapbox';
-import NationalParksData from './data.json';
-import mapIcon from './gold-pointer.png';
-import mapRevertIcon from './map-revert.png';
-import liveTrackIcon from './livetrack.png';
-
-const MAPBOX_TOKEN = 'pk.eyJ1IjoieGNoYW1wcyIsImEiOiJjbThlY3BzbWgwMDVrMmlzNWF0Z3BpNGpzIn0.SeVutB4KYQcAvRvoQC3DCg';
-const MapStyle = 'mapbox://styles/mapbox/satellite-v9';
-const iconUrl = mapIcon;
-
-const INITIAL_VIEW_STATE = {
-  latitude: 33.6095571,
-  longitude: -84.8039517,
-  zoom: 5,
-  pitch: 65,
-  bearing: -30,
-  maxZoom: 20,
-  minZoom: 1
-};
-
-function App() {
-  const [hoverInfo, setHoverInfo] = useState(null);
-  const [tooltipPos, setTooltipPos] = useState(null);
   const [viewState, setViewState] = useState(INITIAL_VIEW_STATE);
   const deckRef = useRef();
   const [selectedId, setSelectedId] = useState(null);
   const pendingIdRef = useRef(null);
-  const canvasRef = useRef();
   const mouseInfluenceRef = useRef({ x: 0, y: 0 });
-  const wrapperRef = useRef();
-  const [zoomDuration, setZoomDuration] = useState(5000);
-
+  const [isLoading, setIsLoading] = useState(false);
+  const loadingTimeoutRef = useRef();
   const [isDragging, setIsDragging] = useState(false);
-  const dragStartRef = useRef({ x: 0, y: 0 });
   const dragPrevRef = useRef({ x: 0, y: 0 });
+  const [isPinTransition, setIsPinTransition] = useState(false);
+  const [pitchSmoothness, setPitchSmoothness] = useState(0.05);
+  const [selectedPin, setSelectedPin] = useState(null);
+  const [tooltipPos, setTooltipPos] = useState(null);
+  const [hoverInfo, setHoverInfo] = useState(null);
 
-  // Enhanced camera state management
+
   const targetViewRef = useRef({ pitch: INITIAL_VIEW_STATE.pitch, bearing: INITIAL_VIEW_STATE.bearing });
   const animationFrameRef = useRef();
   const prevViewStateRef = useRef(null);
   const isDraggingRef = useRef(false);
   const leftDragVelocityRef = useRef({ bearing: 0, pitch: 0, latitude: 0, longitude: 0, zoom: 0 });
-
   const [ambientMovementEnabled, setAmbientMovementEnabled] = useState(true);
   const ambientInfluenceRef = useRef({ x: 0, y: 0 });
-  
-  // Enhanced floating movement
   const floatingVelocityRef = useRef({ x: 0, y: 0 });
   const mouseVelocityRef = useRef({ x: 0, y: 0 });
   const lastMousePosRef = useRef({ x: 0, y: 0 });
   const lastMouseTimeRef = useRef(Date.now());
-
-  const targetPositionRef = useRef({
-    latitude: INITIAL_VIEW_STATE.latitude,
-    longitude: INITIAL_VIEW_STATE.longitude,
-    zoom: INITIAL_VIEW_STATE.zoom
-  });
-
-  // Add base zoom reference for floating effect
+  const touchPrevRef = useRef({ x: 0, y: 0 });
+  const isTouchDraggingRef = useRef(false);
+  const targetPositionRef = useRef({ latitude: INITIAL_VIEW_STATE.latitude, longitude: INITIAL_VIEW_STATE.longitude, zoom: INITIAL_VIEW_STATE.zoom });
   const baseZoomRef = useRef(INITIAL_VIEW_STATE.zoom);
   const tempZoomOffsetRef = useRef(0);
   const isZoomDraggingRef = useRef(false);
+  const canvasRef = useRef(); // Keep if used for other purposes, otherwise can be removed if only for tooltip event (which is now fixed)
+  const wrapperRef = useRef();
+  const shouldStayAtPinPositionRef = useRef(false);
+  const [isAtSmoothDragZoom, setIsAtSmoothDragZoom] = useState(false);
+  const SMOOTH_DRAG_ZOOM_LEVEL = 15.5;
+  const deckInteractionStateRef = useRef({ inTransition: false });
 
   const [smoothnessSettings, setSmoothnessSettings] = useState({
-    // Enhanced floating movement settings
-    floatingStrength: 0.03,
-    floatingDamping: 0.98,
-    floatingMaxInfluence: 15,
-    mouseVelocityInfluence: 0.01,
-    
-    // Enhanced drag settings
-    leftDampingFactor: 0.92,
-    leftDragBearingSensitivity: 0.05,
-    leftSmoothFactor: 0.08,
-    dragLerpFactor: 0.02,
-    
-    // Enhanced zoom settings - Much smaller values for floating effect
-    verticalZoomSensitivity: 0.001, // Reduced from 0.008 to 0.001
-    zoomFloatRange: 1, // Maximum zoom offset from base position
-    zoomReturnSpeed: 0.01, // Speed to return to base zoom
-    zoomDamping: 0.88,
-    minZoom: 1,
-    maxZoom: 15,
-    
-    // Enhanced ambient settings
-    ambientStrength: 0.03,
-    ambientMaxPitch: 0.1,
-    ambientMaxBearing: 0.2,
-    ambientSmoothness: 0.98,
-    ambientMaxLatOffset: 0.002,
-    ambientMaxLngOffset: 0.001,
-    forwardMovementSpeed: 0.06,
-    forwardMovementDamping: 0.94,
-    
-    // Smoothness enhancement
-    globalSmoothness: 0.85,
-    stopThreshold: 0.001
+    floatingStrength: 0.03, floatingDamping: 0.98, floatingMaxInfluence: 15, mouseVelocityInfluence: 0.01,
+    leftDampingFactor: 0.92, leftDragBearingSensitivity: 0.20, leftSmoothFactor: 0.08, dragLerpFactor: 0.02,
+    verticalZoomSensitivity: 0.001, zoomFloatRange: 1, zoomReturnSpeed: 0.1, zoomReturnDamping: 0.85, zoomReturnCurve: 2.0, zoomDamping: 0.88,
+    minZoom: 11, maxZoom: 16,
+    ambientStrength: 0.02, ambientMaxPitch: 0.1, ambientMaxBearing: 0.2, ambientSmoothness: 0.98,
+    ambientMaxLatOffset: 0.002, ambientMaxLngOffset: 0.001,
+    forwardMovementSpeed: 0.06, forwardMovementDamping: 0.94,
+    globalSmoothness: 0.85, stopThreshold: 0.001,
+    boundaryBounceFactor: 0.3, boundaryResistance: 0.8,
+    dynamicPitchEnabled: true, minPitchValue: 0, maxPitchValue: 75,
+    pitchZoomThresholdLow: 11, pitchZoomThresholdHigh: 14,
   });
 
-  // Clamp velocity to prevent sudden jumps
-  const clampVelocity = (velocity, maxValue) => {
-    return Math.max(-maxValue, Math.min(maxValue, velocity));
-  };
-
-  // Enhanced interpolation with momentum preservation
-  const smoothInterpolate = (current, target, factor, momentum = 0) => {
-    const diff = target - current;
-    const newValue = current + diff * factor + momentum;
-    return newValue;
-  };
-
-  const playInitialZoom = (duration) => {
-    const finalDuration = duration ?? zoomDuration ?? 5000;
-    setSelectedId(null);
-    setHoverInfo(null);
-
-    targetPositionRef.current = {
-      latitude: INITIAL_VIEW_STATE.latitude,
-      longitude: INITIAL_VIEW_STATE.longitude,
-      zoom: INITIAL_VIEW_STATE.zoom
+  const clampToRadius = (lat, lng) => { /* ... unchanged ... */ 
+    const latDiff = lat - CENTER_POINT.latitude;
+    const lngDiff = (lng - CENTER_POINT.longitude) * Math.cos(CENTER_POINT.latitude * Math.PI / 180);
+    const distance = Math.sqrt(latDiff * latDiff + lngDiff * lngDiff);
+    if (distance <= MAX_RADIUS) return { latitude: lat, longitude: lng, isAtBoundary: false };
+    const angle = Math.atan2(lngDiff, latDiff);
+    return {
+      latitude: CENTER_POINT.latitude + MAX_RADIUS * Math.cos(angle),
+      longitude: CENTER_POINT.longitude + (MAX_RADIUS * Math.sin(angle)) / Math.cos(CENTER_POINT.latitude * Math.PI / 180),
+      isAtBoundary: true
     };
-    targetViewRef.current = {
-        pitch: INITIAL_VIEW_STATE.pitch,
-        bearing: INITIAL_VIEW_STATE.bearing
-    };
+  };
+  const clampVelocity = (v, max) => Math.max(-max, Math.min(max, v));
+  const smoothInterpolate = (curr, targ, fact, mom = 0) => curr + (targ - curr) * fact + mom;
+
+  const playInitialZoom = (duration) => { /* ... largely unchanged, ensure selectedPin is cleared ... */
+    setSelectedId(null); setHoverInfo(null); setSelectedPin(null); // Clear selectedPin
+    setIsPinTransition(false); shouldStayAtPinPositionRef.current = false;
+    baseZoomRef.current = SMOOTH_DRAG_ZOOM_LEVEL; tempZoomOffsetRef.current = 0;
+    isZoomDraggingRef.current = false; setIsAtSmoothDragZoom(true);
+    targetPositionRef.current = { latitude: CENTER_POINT.latitude, longitude: CENTER_POINT.longitude, zoom: SMOOTH_DRAG_ZOOM_LEVEL };
+    targetViewRef.current = { pitch: INITIAL_VIEW_STATE.pitch, bearing: INITIAL_VIEW_STATE.bearing };
     leftDragVelocityRef.current = { bearing: 0, pitch: 0, latitude: 0, longitude: 0, zoom: 0 };
     floatingVelocityRef.current = { x: 0, y: 0 };
-    
-    // Reset zoom references
-    baseZoomRef.current = INITIAL_VIEW_STATE.zoom;
-    tempZoomOffsetRef.current = 0;
-    isZoomDraggingRef.current = false;
-
     setViewState(prev => ({
-      ...INITIAL_VIEW_STATE,
-      zoom: 14,
-      pitch: 80,
-      bearing: -20,
-      transitionDuration: finalDuration,
-      transitionInterpolator: new FlyToInterpolator()
+      ...prev, longitude: CENTER_POINT.longitude, latitude: CENTER_POINT.latitude, zoom: SMOOTH_DRAG_ZOOM_LEVEL,
+      pitch: 75, bearing: -20, transitionDuration: duration ?? 5000, transitionInterpolator: new FlyToInterpolator(),
+      onTransitionEnd: () => {
+        targetPositionRef.current = { latitude: CENTER_POINT.latitude, longitude: CENTER_POINT.longitude, zoom: SMOOTH_DRAG_ZOOM_LEVEL };
+        targetViewRef.current = { pitch: INITIAL_VIEW_STATE.pitch, bearing: INITIAL_VIEW_STATE.bearing };
+        baseZoomRef.current = SMOOTH_DRAG_ZOOM_LEVEL; shouldStayAtPinPositionRef.current = false;
+      }
     }));
   };
 
-  useEffect(() => {
-    const timeout = setTimeout(() => {
-      playInitialZoom();
-    }, 300);
-    return () => clearTimeout(timeout);
-  }, []);
+  useEffect(() => () => { if (loadingTimeoutRef.current) clearTimeout(loadingTimeoutRef.current); }, []);
+  useEffect(() => { const t = setTimeout(playInitialZoom, 300); return () => clearTimeout(t); }, []);
 
-  useEffect(() => {
-    if (hoverInfo && deckRef.current && deckRef.current.deck) {
-      const viewports = deckRef.current.deck.getViewports();
-      if (viewports && viewports.length > 0) {
-        const viewport = viewports[0];
-        const [x, y] = viewport.project([hoverInfo.longitude, hoverInfo.latitude]);
-        setTooltipPos({ x, y });
-      }
-    } else {
-      setTooltipPos(null);
-    }
-  }, [hoverInfo, viewState]);
+  useEffect(() => { // Tooltip positioning
+    if (selectedPin && deckRef.current && deckRef.current.deck) {
+      const updateTooltipPosition = () => {
+        if (deckRef.current && deckRef.current.deck) {
+          const viewports = deckRef.current.deck.getViewports();
+          if (viewports && viewports.length > 0) {
+            const viewport = viewports[0];
+            const [x, y] = viewport.project([selectedPin.longitude, selectedPin.latitude]);
+            setTooltipPos({ x, y });
+          }
+        }
+      };
+      updateTooltipPosition();
+      const deckCanvas = deckRef.current.deck.canvas;
+      if (deckCanvas) deckCanvas.addEventListener('deck.gl.viewState', updateTooltipPosition);
+      return () => { if (deckCanvas) deckCanvas.removeEventListener('deck.gl.viewState', updateTooltipPosition); };
+    } else { setTooltipPos(null); }
+  }, [selectedPin, viewState]);
 
-  // Enhanced smooth camera updates
-  useEffect(() => {
-    const smoothUpdate = () => {
-      // Check if tab is hidden to save resources
-      if (document.hidden) {
-        animationFrameRef.current = requestAnimationFrame(smoothUpdate);
+
+  useEffect(() => { // smoothUpdateLoop
+    const smoothUpdateLoop = () => {
+      if (document.hidden || deckInteractionStateRef.current.inTransition) {
+        animationFrameRef.current = requestAnimationFrame(smoothUpdateLoop);
         return;
       }
-
       setViewState(prev => {
-        const currentPitch = prev.pitch;
-        const currentBearing = prev.bearing;
-        const currentLatitude = prev.latitude;
-        const currentLongitude = prev.longitude;
-        const currentZoom = prev.zoom;
+        const { pitch: currentPitch, bearing: currentBearing, latitude: currentLatitude, longitude: currentLongitude, zoom: currentZoom } = prev;
+        prevViewStateRef.current = { ...prev };
+        let newPitch = currentPitch, newBearing = currentBearing, newLatitude = currentLatitude, newLongitude = currentLongitude, newZoom = currentZoom;
 
-        prevViewStateRef.current = {
-          pitch: currentPitch,
-          bearing: currentBearing,
-          latitude: currentLatitude,
-          longitude: currentLongitude,
-          zoom: currentZoom
-        };
-
-        let newPitch = currentPitch;
-        let newBearing = currentBearing;
-        let newLatitude = currentLatitude;
-        let newLongitude = currentLongitude;
-        let newZoom = currentZoom;
-
-        if (isDraggingRef.current) {
-          // Enhanced drag interpolation with momentum
+        if (isDraggingRef.current || isTouchDraggingRef.current) {
+          shouldStayAtPinPositionRef.current = false;
           newPitch = smoothInterpolate(currentPitch, targetViewRef.current.pitch, smoothnessSettings.dragLerpFactor);
           newBearing = smoothInterpolate(currentBearing, targetViewRef.current.bearing, smoothnessSettings.dragLerpFactor);
           newLatitude = smoothInterpolate(currentLatitude, targetPositionRef.current.latitude, smoothnessSettings.dragLerpFactor);
           newLongitude = smoothInterpolate(currentLongitude, targetPositionRef.current.longitude, smoothnessSettings.dragLerpFactor);
-          
-          // Handle floating zoom effect during drag
-          if (isZoomDraggingRef.current) {
-            const targetZoom = baseZoomRef.current + tempZoomOffsetRef.current;
-            newZoom = smoothInterpolate(currentZoom, targetZoom, smoothnessSettings.dragLerpFactor);
-          } else {
-            newZoom = smoothInterpolate(currentZoom, targetPositionRef.current.zoom, smoothnessSettings.dragLerpFactor);
-          }
-        } else {
-          // Enhanced inertia with better damping and zoom support
-          if (Math.abs(leftDragVelocityRef.current.bearing) > smoothnessSettings.stopThreshold ||
-              Math.abs(leftDragVelocityRef.current.pitch) > smoothnessSettings.stopThreshold ||
-              Math.abs(leftDragVelocityRef.current.latitude) > smoothnessSettings.stopThreshold ||
-              Math.abs(leftDragVelocityRef.current.longitude) > smoothnessSettings.stopThreshold ||
-              Math.abs(tempZoomOffsetRef.current) > smoothnessSettings.stopThreshold) {
-            
+          if (isZoomDraggingRef.current) newZoom = smoothInterpolate(currentZoom, baseZoomRef.current + tempZoomOffsetRef.current, smoothnessSettings.dragLerpFactor);
+          else newZoom = smoothInterpolate(currentZoom, targetPositionRef.current.zoom, smoothnessSettings.dragLerpFactor);
+          const clampedDrag = clampToRadius(newLatitude, newLongitude);
+          newLatitude = clampedDrag.latitude; newLongitude = clampedDrag.longitude;
+          if (clampedDrag.isAtBoundary) { leftDragVelocityRef.current.latitude *= smoothnessSettings.boundaryResistance; leftDragVelocityRef.current.longitude *= smoothnessSettings.boundaryResistance; }
+        } else { // Not dragging
+          if (Object.values(leftDragVelocityRef.current).some(v => Math.abs(v) > smoothnessSettings.stopThreshold)) { // Inertia
             newBearing = currentBearing + leftDragVelocityRef.current.bearing;
-            newPitch = Math.max(0, Math.min(85, currentPitch + leftDragVelocityRef.current.pitch));
-            newLatitude = currentLatitude + leftDragVelocityRef.current.latitude;
-            newLongitude = currentLongitude + leftDragVelocityRef.current.longitude;
+            let pitchAfterInertia = Math.max(0, Math.min(85, currentPitch + leftDragVelocityRef.current.pitch));
+            let tempLatInertia = currentLatitude + leftDragVelocityRef.current.latitude;
+            let tempLngInertia = currentLongitude + leftDragVelocityRef.current.longitude;
+            const clampedInertia = clampToRadius(tempLatInertia, tempLngInertia);
+            newLatitude = clampedInertia.latitude; newLongitude = clampedInertia.longitude;
 
-            // Floating zoom return effect - smoothly return to base zoom
-            if (!isZoomDraggingRef.current && Math.abs(tempZoomOffsetRef.current) > smoothnessSettings.stopThreshold) {
-              tempZoomOffsetRef.current *= (1 - smoothnessSettings.zoomReturnSpeed);
-            }
-            newZoom = Math.max(smoothnessSettings.minZoom, Math.min(smoothnessSettings.maxZoom, baseZoomRef.current + tempZoomOffsetRef.current));
-
-            // Enhanced damping with different rates for different properties
             leftDragVelocityRef.current = {
               bearing: leftDragVelocityRef.current.bearing * smoothnessSettings.leftDampingFactor,
               pitch: leftDragVelocityRef.current.pitch * smoothnessSettings.leftDampingFactor,
-              latitude: leftDragVelocityRef.current.latitude * smoothnessSettings.leftDampingFactor,
-              longitude: leftDragVelocityRef.current.longitude * smoothnessSettings.leftDampingFactor,
-              zoom: 0 // No zoom velocity for floating effect
+              latitude: (clampedInertia.isAtBoundary ? leftDragVelocityRef.current.latitude * smoothnessSettings.boundaryResistance : leftDragVelocityRef.current.latitude) * smoothnessSettings.leftDampingFactor,
+              longitude: (clampedInertia.isAtBoundary ? leftDragVelocityRef.current.longitude * smoothnessSettings.boundaryResistance : leftDragVelocityRef.current.longitude) * smoothnessSettings.leftDampingFactor,
+              zoom: leftDragVelocityRef.current.zoom // Zoom velocity handled later
             };
             
-            targetViewRef.current = { pitch: newPitch, bearing: newBearing };
-            targetPositionRef.current = { latitude: newLatitude, longitude: newLongitude, zoom: newZoom };
+            if (shouldStayAtPinPositionRef.current) {
+              newPitch = pitchAfterInertia; // View pitch shows inertia
+              // Target pitch remains fixed (e.g. 65). Target bearing might also be fixed or follow inertia.
+              // For now, assume target bearing is also fixed when at a pin.
+              targetViewRef.current = { pitch: targetViewRef.current.pitch, bearing: targetViewRef.current.bearing };
+            } else {
+              newPitch = pitchAfterInertia;
+              targetViewRef.current = { pitch: newPitch, bearing: newBearing };
+            }
+            // Position target always updated by inertia
+            targetPositionRef.current = { ...targetPositionRef.current, latitude: newLatitude, longitude: newLongitude };
+            // Zoom during inertia (if not staying at pin)
+            if (!shouldStayAtPinPositionRef.current) {
+                newZoom = currentZoom + leftDragVelocityRef.current.zoom;
+            } else {
+                newZoom = targetPositionRef.current.zoom; // Should be pin's zoom
+                leftDragVelocityRef.current.zoom = 0;
+            }
 
-          } else if (ambientMovementEnabled) {
-            // Enhanced ambient movement with floating effect
-            const basePitch = targetViewRef.current.pitch;
-            const baseBearing = targetViewRef.current.bearing;
-            const baseLatitude = targetPositionRef.current.latitude;
-            const baseLongitude = targetPositionRef.current.longitude;
-
-            // Enhanced floating movement with mouse velocity influence
+          } else if (ambientMovementEnabled && !isPinTransition && !shouldStayAtPinPositionRef.current) { // Ambient
+            const { pitch: basePitch, bearing: baseBearing } = targetViewRef.current;
+            const { latitude: baseLatitude, longitude: baseLongitude } = targetPositionRef.current;
             const mouseInfluenceX = mouseInfluenceRef.current.x + mouseVelocityRef.current.x * smoothnessSettings.mouseVelocityInfluence;
             const mouseInfluenceY = mouseInfluenceRef.current.y + mouseVelocityRef.current.y * smoothnessSettings.mouseVelocityInfluence;
-
-            const pitchInfluence = mouseInfluenceY * smoothnessSettings.ambientMaxPitch;
-            const bearingInfluence = mouseInfluenceX * smoothnessSettings.ambientMaxBearing;
-            const latInfluence = mouseInfluenceY * smoothnessSettings.ambientMaxLatOffset;
-            const lngInfluence = mouseInfluenceX * smoothnessSettings.ambientMaxLngOffset;
-
-            // Add floating velocity for more dynamic movement
-            floatingVelocityRef.current.x += mouseInfluenceX * smoothnessSettings.floatingStrength;
-            floatingVelocityRef.current.y += mouseInfluenceY * smoothnessSettings.floatingStrength;
-            
-            // Clamp floating velocity
-            floatingVelocityRef.current.x = clampVelocity(floatingVelocityRef.current.x, smoothnessSettings.floatingMaxInfluence);
-            floatingVelocityRef.current.y = clampVelocity(floatingVelocityRef.current.y, smoothnessSettings.floatingMaxInfluence);
-            
-            // Apply floating velocity to movement
-            const ambientTargetPitch = Math.max(0, Math.min(85, basePitch + pitchInfluence + floatingVelocityRef.current.y));
-            const ambientTargetBearing = baseBearing + bearingInfluence + floatingVelocityRef.current.x;
-            const ambientTargetLatitude = baseLatitude + latInfluence + floatingVelocityRef.current.y * 0.001;
-            const ambientTargetLongitude = baseLongitude + lngInfluence + floatingVelocityRef.current.x * 0.001;
-
-            // Dampen floating velocity
-            floatingVelocityRef.current.x *= smoothnessSettings.floatingDamping;
-            floatingVelocityRef.current.y *= smoothnessSettings.floatingDamping;
-
+            floatingVelocityRef.current.x = clampVelocity(floatingVelocityRef.current.x + mouseInfluenceX * smoothnessSettings.floatingStrength, smoothnessSettings.floatingMaxInfluence) * smoothnessSettings.floatingDamping;
+            floatingVelocityRef.current.y = clampVelocity(floatingVelocityRef.current.y + mouseInfluenceY * smoothnessSettings.floatingStrength, smoothnessSettings.floatingMaxInfluence) * smoothnessSettings.floatingDamping;
+            const ambientTargetPitch = Math.max(0, Math.min(85, basePitch + mouseInfluenceY * smoothnessSettings.ambientMaxPitch + floatingVelocityRef.current.y));
+            const ambientTargetBearing = baseBearing + mouseInfluenceX * smoothnessSettings.ambientMaxBearing + floatingVelocityRef.current.x;
+            const clampedAmbient = clampToRadius(baseLatitude + mouseInfluenceY * smoothnessSettings.ambientMaxLatOffset + floatingVelocityRef.current.y * 0.001, baseLongitude + mouseInfluenceX * smoothnessSettings.ambientMaxLngOffset + floatingVelocityRef.current.x * 0.001);
             const smoothFactor = 1 - smoothnessSettings.ambientSmoothness;
             newPitch = currentPitch + (ambientTargetPitch - currentPitch) * smoothFactor;
             newBearing = currentBearing + (ambientTargetBearing - currentBearing) * smoothFactor;
-            newLatitude = currentLatitude + (ambientTargetLatitude - currentLatitude) * smoothFactor;
-            newLongitude = currentLongitude + (ambientTargetLongitude - currentLongitude) * smoothFactor;
-          } else {
-            // Standard smooth interpolation
-            const smoothFactor = smoothnessSettings.leftSmoothFactor;
-            newPitch = currentPitch + (targetViewRef.current.pitch - currentPitch) * smoothFactor;
-            newBearing = currentBearing + (targetViewRef.current.bearing - currentBearing) * smoothFactor;
-            newLatitude = currentLatitude + (targetPositionRef.current.latitude - currentLatitude) * smoothFactor;
-            newLongitude = currentLongitude + (targetPositionRef.current.longitude - currentLongitude) * smoothFactor;
-            newZoom = currentZoom + (targetPositionRef.current.zoom - currentZoom) * smoothFactor;
+            newLatitude = currentLatitude + (clampedAmbient.latitude - currentLatitude) * smoothFactor;
+            newLongitude = currentLongitude + (clampedAmbient.longitude - currentLongitude) * smoothFactor;
+            newZoom = baseZoomRef.current; tempZoomOffsetRef.current = 0;
+          } else { // Settling to target / Staying at pin with no other forces
+            const settleSmoothFactor = shouldStayAtPinPositionRef.current ? 0.35 : smoothnessSettings.leftSmoothFactor; // Faster settle at pin
+
+            if (shouldStayAtPinPositionRef.current && !isPinTransition) {
+              newPitch = targetViewRef.current.pitch; // DIRECT SET for PITCH at PIN
+
+              newBearing = currentBearing + (targetViewRef.current.bearing - currentBearing) * settleSmoothFactor;
+              if (Math.abs(targetViewRef.current.bearing - newBearing) < 0.01) newBearing = targetViewRef.current.bearing;
+              newLatitude = currentLatitude + (targetPositionRef.current.latitude - currentLatitude) * settleSmoothFactor;
+              if (Math.abs(targetPositionRef.current.latitude - newLatitude) < 0.00001) newLatitude = targetPositionRef.current.latitude;
+              newLongitude = currentLongitude + (targetPositionRef.current.longitude - currentLongitude) * settleSmoothFactor;
+              if (Math.abs(targetPositionRef.current.longitude - newLongitude) < 0.00001) newLongitude = targetPositionRef.current.longitude;
+              newZoom = currentZoom + (targetPositionRef.current.zoom - currentZoom) * settleSmoothFactor;
+              if (Math.abs(targetPositionRef.current.zoom - newZoom) < 0.01) newZoom = targetPositionRef.current.zoom;
+            } else if (!isPinTransition) { // General settling
+              newPitch = currentPitch + (targetViewRef.current.pitch - currentPitch) * settleSmoothFactor;
+              newBearing = currentBearing + (targetViewRef.current.bearing - currentBearing) * settleSmoothFactor;
+              let targetLat = currentLatitude + (targetPositionRef.current.latitude - currentLatitude) * settleSmoothFactor;
+              let targetLng = currentLongitude + (targetPositionRef.current.longitude - currentLongitude) * settleSmoothFactor;
+              const clampedSettle = clampToRadius(targetLat, targetLng);
+              newLatitude = clampedSettle.latitude; newLongitude = clampedSettle.longitude;
+              newZoom = currentZoom + (targetPositionRef.current.zoom - currentZoom) * settleSmoothFactor;
+            } else { /* In pin transition, viewState driven by DeckGL */ }
+            if (!(isDraggingRef.current || isTouchDraggingRef.current || isPinTransition) && Math.abs(newZoom - targetPositionRef.current.zoom) < 0.1) { baseZoomRef.current = targetPositionRef.current.zoom; }
           }
         }
+
+        // Zoom stabilization logic (mostly for free exploration, not when locked to pin's zoom)
+        if (!shouldStayAtPinPositionRef.current && !(isDraggingRef.current || isTouchDraggingRef.current)) {
+          const zoomDiffToStable = SMOOTH_DRAG_ZOOM_LEVEL - newZoom;
+          if (Math.abs(zoomDiffToStable) < 0.08 && (Math.abs(leftDragVelocityRef.current.zoom) < 0.01 || Math.sign(leftDragVelocityRef.current.zoom) === Math.sign(zoomDiffToStable))) {
+            newZoom = SMOOTH_DRAG_ZOOM_LEVEL; leftDragVelocityRef.current.zoom = 0; tempZoomOffsetRef.current = 0; baseZoomRef.current = SMOOTH_DRAG_ZOOM_LEVEL;
+            if (!isAtSmoothDragZoom) setIsAtSmoothDragZoom(true);
+          } else {
+            leftDragVelocityRef.current.zoom = (leftDragVelocityRef.current.zoom * smoothnessSettings.zoomDamping) + (zoomDiffToStable * 0.03);
+            if (Math.abs(leftDragVelocityRef.current.zoom) < 0.0001) leftDragVelocityRef.current.zoom = 0;
+            if (isAtSmoothDragZoom) setIsAtSmoothDragZoom(false);
+          }
+        } else if (shouldStayAtPinPositionRef.current) {
+            // If at pin, zoom should already be set to targetPositionRef.current.zoom by settling logic or inertia handling
+            if (baseZoomRef.current !== targetPositionRef.current.zoom) baseZoomRef.current = targetPositionRef.current.zoom;
+            leftDragVelocityRef.current.zoom = 0;
+        }
         
-        newPitch = Math.max(0, Math.min(85, newPitch));
+        newPitch = Math.max(0, Math.min(80, newPitch)); // Final clamp for pitch
         newZoom = Math.max(smoothnessSettings.minZoom, Math.min(smoothnessSettings.maxZoom, newZoom));
-
-        return {
-          ...prev,
-          pitch: newPitch,
-          bearing: newBearing,
-          latitude: newLatitude,
-          longitude: newLongitude,
-          zoom: newZoom,
-          transitionDuration: 0
-        };
+        return { ...prev, pitch: newPitch, bearing: newBearing, latitude: newLatitude, longitude: newLongitude, zoom: newZoom, transitionDuration: 0 };
       });
-
-      animationFrameRef.current = requestAnimationFrame(smoothUpdate);
+      animationFrameRef.current = requestAnimationFrame(smoothUpdateLoop);
     };
-
-    animationFrameRef.current = requestAnimationFrame(smoothUpdate);
+    animationFrameRef.current = requestAnimationFrame(smoothUpdateLoop);
     return () => cancelAnimationFrame(animationFrameRef.current);
-  }, [smoothnessSettings, ambientMovementEnabled]);
+  }, [smoothnessSettings, ambientMovementEnabled, isPinTransition, isAtSmoothDragZoom]); // isAtSmoothDragZoom added as it's set inside
 
-  // Enhanced mouse movement tracking with velocity calculation
-  useEffect(() => {
-    const handleMouseMove = (e) => {
-      const x = e.clientX;
-      const y = e.clientY;
-      const currentTime = Date.now();
-      
-      // Calculate mouse velocity for enhanced floating effect
-      const deltaTime = currentTime - lastMouseTimeRef.current;
-      if (deltaTime > 0) {
-        const deltaX = x - lastMousePosRef.current.x;
-        const deltaY = y - lastMousePosRef.current.y;
-        
-        mouseVelocityRef.current.x = deltaX / deltaTime;
-        mouseVelocityRef.current.y = deltaY / deltaTime;
-        
-        // Clamp velocity
-        mouseVelocityRef.current.x = clampVelocity(mouseVelocityRef.current.x, 2);
-        mouseVelocityRef.current.y = clampVelocity(mouseVelocityRef.current.y, 2);
-      }
-      
-      lastMousePosRef.current = { x, y };
-      lastMouseTimeRef.current = currentTime;
-      
-      if (ambientMovementEnabled && !isDraggingRef.current) {
-        const { innerWidth, innerHeight } = window;
-        const xNorm = (x / innerWidth) * 2 - 1;
-        const yNorm = (y / innerHeight) * 2 - 1;
-        
-        mouseInfluenceRef.current = { x: xNorm, y: yNorm };
-        
-        // Enhanced ambient calculation with floating effect
-        ambientInfluenceRef.current = {
-          x: ambientInfluenceRef.current.x * smoothnessSettings.ambientSmoothness +
-             mouseInfluenceRef.current.x * smoothnessSettings.ambientStrength * (1 - smoothnessSettings.ambientSmoothness),
-          y: ambientInfluenceRef.current.y * smoothnessSettings.ambientSmoothness +
-             mouseInfluenceRef.current.y * smoothnessSettings.ambientStrength * (1 - smoothnessSettings.ambientSmoothness)
-        };
-      }
-
-      if (isDraggingRef.current) {
-        const deltaX = x - dragPrevRef.current.x;
-        const deltaY = y - dragPrevRef.current.y;
-
-        if (e.buttons === 2) { // Right-click drag for pitch/bearing
-          targetViewRef.current = {
-            pitch: Math.max(0, Math.min(85, targetViewRef.current.pitch - deltaY * 0.25)),
-            bearing: targetViewRef.current.bearing - deltaX * 0.35
-          };
-        } else if (e.buttons === 1) { // Left-click drag for rotate, forward/backward, and floating zoom
-          // Horizontal movement controls rotation (bearing)
-          targetViewRef.current = {
-            ...targetViewRef.current,
-            bearing: targetViewRef.current.bearing - deltaX * smoothnessSettings.leftDragBearingSensitivity
-          };
-
-          // Enhanced floating zoom control with vertical drag
+  useEffect(() => { /* ... Event handlers (mousedown, mouseup, etc.) ... unchanged for this fix */ 
+    const handleDragMovement = (x, y, buttons) => { 
+        const prevX = (isDraggingRef.current && !isTouchDraggingRef.current) ? dragPrevRef.current.x : touchPrevRef.current.x;
+        const prevY = (isDraggingRef.current && !isTouchDraggingRef.current) ? dragPrevRef.current.y : touchPrevRef.current.y;
+        const deltaX = x - prevX; const deltaY = y - prevY;
+        if (buttons === 2 && isDraggingRef.current) {
+          targetViewRef.current = { pitch: Math.max(0, Math.min(85, targetViewRef.current.pitch - deltaY * 0.25)), bearing: targetViewRef.current.bearing - deltaX * 0.35 };
+        } else if (buttons === 1) {
+          targetViewRef.current = { ...targetViewRef.current, bearing: targetViewRef.current.bearing - deltaX * smoothnessSettings.leftDragBearingSensitivity };
           isZoomDraggingRef.current = true;
-          const zoomDelta = deltaY * smoothnessSettings.verticalZoomSensitivity;
-          
-          // Update temporary zoom offset instead of actual zoom
-          tempZoomOffsetRef.current += zoomDelta;
-          
-          // Clamp the offset to the float range
-          tempZoomOffsetRef.current = Math.max(
-            -smoothnessSettings.zoomFloatRange, 
-            Math.min(smoothnessSettings.zoomFloatRange, tempZoomOffsetRef.current)
-          );
-
-          // Enhanced forward/backward movement based on bearing
+          tempZoomOffsetRef.current = Math.max(-smoothnessSettings.zoomFloatRange, Math.min(smoothnessSettings.zoomFloatRange, tempZoomOffsetRef.current + (deltaY * smoothnessSettings.verticalZoomSensitivity)));
           const bearingRad = (targetViewRef.current.bearing * Math.PI) / 180;
-          const zoomFactor = Math.pow(2, viewState.zoom); 
-          const effectiveMoveSpeed = smoothnessSettings.forwardMovementSpeed / zoomFactor * 100;
-
-          const moveDistance = deltaY * effectiveMoveSpeed * 0.5; // Reduced for smoother movement
-
-          targetPositionRef.current = {
-            ...targetPositionRef.current,
-            latitude: targetPositionRef.current.latitude + Math.cos(bearingRad) * moveDistance,
-            longitude: targetPositionRef.current.longitude + Math.sin(bearingRad) * moveDistance
-          };
+          const moveDistance = deltaY * (smoothnessSettings.forwardMovementSpeed / Math.pow(2, baseZoomRef.current) * 100) * 0.5;
+          const clamped = clampToRadius(targetPositionRef.current.latitude + Math.cos(bearingRad) * moveDistance, targetPositionRef.current.longitude + Math.sin(bearingRad) * moveDistance);
+          targetPositionRef.current = { ...targetPositionRef.current, latitude: clamped.latitude, longitude: clamped.longitude };
+          if (clamped.isAtBoundary) tempZoomOffsetRef.current *= 0.5;
         }
-        dragPrevRef.current = { x, y };
-      }
+        if (isDraggingRef.current && !isTouchDraggingRef.current) dragPrevRef.current = { x, y }; else if (isTouchDraggingRef.current) touchPrevRef.current = { x, y };
     };
-
-    window.addEventListener('mousemove', handleMouseMove);
-    return () => window.removeEventListener('mousemove', handleMouseMove);
-  }, [smoothnessSettings, viewState.zoom, ambientMovementEnabled]);
-
-  // Enhanced mouse event handling
-  useEffect(() => {
-    const handleMouseDown = (e) => {
-      if (e.button === 0 || e.button === 2) {
-        isDraggingRef.current = true;
-        setIsDragging(true);
-        dragStartRef.current = { x: e.clientX, y: e.clientY };
-        dragPrevRef.current = { x: e.clientX, y: e.clientY };
-        leftDragVelocityRef.current = { bearing: 0, pitch: 0, latitude: 0, longitude: 0, zoom: 0 };
-        floatingVelocityRef.current = { x: 0, y: 0 }; // Reset floating velocity on drag start
-        
-        // Set base zoom when starting drag
-        if (e.button === 0) { // Left mouse button
-          baseZoomRef.current = viewState.zoom;
-          tempZoomOffsetRef.current = 0;
-          isZoomDraggingRef.current = false;
-        }
-      }
-    };
-
-    const handleMouseUp = (e) => {
-      if ((e.button === 0 || e.button === 2) && isDraggingRef.current) {
+    const commonDragEndLogic = (isTouchEvent = false) => { 
         if (prevViewStateRef.current && viewState) {
-          const bearingDelta = viewState.bearing - prevViewStateRef.current.bearing;
-          const pitchDelta = viewState.pitch - prevViewStateRef.current.pitch;
-          const latDelta = viewState.latitude - prevViewStateRef.current.latitude;
-          const lngDelta = viewState.longitude - prevViewStateRef.current.longitude;
-          
-          const inertiaMultiplier = 1.2; // Increased for more momentum
-
-          // Clamp velocities to prevent sudden jumps (no zoom velocity for floating effect)
-          leftDragVelocityRef.current = {
-            bearing: clampVelocity(bearingDelta * inertiaMultiplier, 8),
-            pitch: clampVelocity(pitchDelta * inertiaMultiplier, 5),
-            latitude: clampVelocity(latDelta * inertiaMultiplier, 0.1),
-            longitude: clampVelocity(lngDelta * inertiaMultiplier, 0.1),
-            zoom: 0 // No zoom velocity - let floating effect handle zoom return
-          };
-        }
-        
-        isDraggingRef.current = false;
-        setIsDragging(false);
-        isZoomDraggingRef.current = false; // Release zoom drag
-
-        targetPositionRef.current = {
-            latitude: viewState.latitude,
-            longitude: viewState.longitude,
-            zoom: viewState.zoom
-        };
-        targetViewRef.current = {
-            pitch: viewState.pitch,
-            bearing: viewState.bearing,
-        };
-      }
+            const { bearing: pBearing, pitch: pPitch, latitude: pLat, longitude: pLng } = prevViewStateRef.current;
+            const { bearing: cBearing, pitch: cPitch, latitude: cLat, longitude: cLng } = viewState; // Use current viewState
+            const inertiaMultiplier = 1.2; let zoomVelocity = 0;
+            if (!shouldStayAtPinPositionRef.current) {
+              const zoomDiffToStable = SMOOTH_DRAG_ZOOM_LEVEL - (baseZoomRef.current + tempZoomOffsetRef.current);
+              if (Math.abs(zoomDiffToStable) > 0.01) zoomVelocity = zoomDiffToStable * 0.05;
+            }
+            leftDragVelocityRef.current = {
+              bearing: clampVelocity((cBearing - pBearing) * inertiaMultiplier, 8),
+              pitch: clampVelocity(((isDraggingRef.current && !isZoomDraggingRef.current && !isTouchEvent) ? (cPitch - pPitch) : 0) * inertiaMultiplier, 5),
+              latitude: clampVelocity((cLat - pLat) * inertiaMultiplier, 0.1),
+              longitude: clampVelocity((cLng - pLng) * inertiaMultiplier, 0.1),
+              zoom: clampVelocity(zoomVelocity, 0.3)
+            };
+          }
+          if (isTouchEvent) isTouchDraggingRef.current = false; else isDraggingRef.current = false;
+          setIsDragging(false); isZoomDraggingRef.current = false; tempZoomOffsetRef.current = 0;
     };
-
-    window.addEventListener('mousedown', handleMouseDown);
-    window.addEventListener('mouseup', handleMouseUp);
+    const handleMouseDown = (e) => {
+        if (e.button === 0 || e.button === 2) {
+            if (selectedId || selectedPin) { setSelectedId(null); setSelectedPin(null); setHoverInfo(null); }
+            isDraggingRef.current = true; setIsDragging(true); dragPrevRef.current = { x: e.clientX, y: e.clientY };
+            leftDragVelocityRef.current = { bearing: 0, pitch: 0, latitude: 0, longitude: 0, zoom: 0 };
+            floatingVelocityRef.current = { x: 0, y: 0 }; shouldStayAtPinPositionRef.current = false;
+            targetPositionRef.current = { latitude: viewState.latitude, longitude: viewState.longitude, zoom: viewState.zoom };
+            targetViewRef.current = { pitch: viewState.pitch, bearing: viewState.bearing };
+            baseZoomRef.current = viewState.zoom; tempZoomOffsetRef.current = 0;
+            isZoomDraggingRef.current = (e.button === 0);
+          }
+    };
+    const handleMouseUp = (e) => { if ((e.button === 0 || e.button === 2) && isDraggingRef.current) commonDragEndLogic(false); };
+    const handleTouchStart = (e) => { 
+        if (e.touches.length === 1) { e.preventDefault();
+            if (selectedId || selectedPin) { setSelectedId(null); setSelectedPin(null); setHoverInfo(null); }
+            const touch = e.touches[0]; isTouchDraggingRef.current = true; setIsDragging(true); touchPrevRef.current = { x: touch.clientX, y: touch.clientY };
+            leftDragVelocityRef.current = { bearing: 0, pitch: 0, latitude: 0, longitude: 0, zoom: 0 };
+            floatingVelocityRef.current = { x: 0, y: 0 }; shouldStayAtPinPositionRef.current = false;
+            targetPositionRef.current = { latitude: viewState.latitude, longitude: viewState.longitude, zoom: viewState.zoom };
+            targetViewRef.current = { pitch: viewState.pitch, bearing: viewState.bearing };
+            baseZoomRef.current = viewState.zoom; tempZoomOffsetRef.current = 0; isZoomDraggingRef.current = true;
+          }
+    };
+    const handleTouchEnd = (e) => { if (isTouchDraggingRef.current && e.touches.length === 0) commonDragEndLogic(true); };
+    const handleMouseMove = (e) => { 
+        if (ambientMovementEnabled && !isDraggingRef.current && !isTouchDraggingRef.current && !shouldStayAtPinPositionRef.current) {
+            const { clientX: x, clientY: y } = e; const currentTime = Date.now(); const deltaTime = currentTime - lastMouseTimeRef.current;
+            if (deltaTime > 0) {
+              mouseVelocityRef.current.x = clampVelocity((x - lastMousePosRef.current.x) / deltaTime, 2);
+              mouseVelocityRef.current.y = clampVelocity((y - lastMousePosRef.current.y) / deltaTime, 2);
+            }
+            lastMousePosRef.current = { x, y }; lastMouseTimeRef.current = currentTime;
+            mouseInfluenceRef.current = { x: (x / window.innerWidth) * 2 - 1, y: (y / window.innerHeight) * 2 - 1 };
+            ambientInfluenceRef.current = {
+              x: ambientInfluenceRef.current.x * smoothnessSettings.ambientSmoothness + mouseInfluenceRef.current.x * smoothnessSettings.ambientStrength * (1 - smoothnessSettings.ambientSmoothness),
+              y: ambientInfluenceRef.current.y * smoothnessSettings.ambientSmoothness + mouseInfluenceRef.current.y * smoothnessSettings.ambientStrength * (1 - smoothnessSettings.ambientSmoothness)
+            };
+          }
+          if (isDraggingRef.current && !isTouchDraggingRef.current) handleDragMovement(e.clientX, e.clientY, e.buttons || 1);
+    };
+    const handleTouchMove = (e) => { if (isTouchDraggingRef.current && e.touches.length === 1) { e.preventDefault(); handleDragMovement(e.touches[0].clientX, e.touches[0].clientY, 1); } };
     const preventDefaultContextMenu = (e) => e.preventDefault();
+    window.addEventListener('mousedown', handleMouseDown); window.addEventListener('mouseup', handleMouseUp); window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('touchstart', handleTouchStart, { passive: false }); window.addEventListener('touchend', handleTouchEnd, { passive: false }); window.addEventListener('touchmove', handleTouchMove, { passive: false });
     window.addEventListener('contextmenu', preventDefaultContextMenu);
-
-    return () => {
-      window.removeEventListener('mousedown', handleMouseDown);
-      window.removeEventListener('mouseup', handleMouseUp);
+    return () => { /* remove listeners */ 
+      window.removeEventListener('mousedown', handleMouseDown); window.removeEventListener('mouseup', handleMouseUp); window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('touchstart', handleTouchStart); window.removeEventListener('touchend', handleTouchEnd); window.removeEventListener('touchmove', handleTouchMove);
       window.removeEventListener('contextmenu', preventDefaultContextMenu);
     };
-  }, [viewState, smoothnessSettings.leftDampingFactor]);
+  }, [viewState, smoothnessSettings, ambientMovementEnabled, selectedId, selectedPin]); // Key dependencies
 
-  useEffect(() => {
+  useEffect(() => { /* ... meta viewport ... unchanged */ 
     let meta = document.querySelector('meta[name="viewport"]');
-    if (!meta) {
-      meta = document.createElement('meta');
-      meta.name = 'viewport';
-      meta.content = 'width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no';
-      document.getElementsByTagName('head')[0].appendChild(meta);
-    }
+    if (!meta) { meta = document.createElement('meta'); meta.name = 'viewport'; meta.content = 'width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no'; document.head.appendChild(meta); }
   }, []);
 
-  const layers = [
-    new IconLayer({
-      id: 'nationalParksIcons-' + selectedId,
-      data: NationalParksData.features,
-      pickable: true,
-      getPosition: d => {
-        const coords = d.geometry.coordinates;
-        return Array.isArray(coords[0]) ? coords[0] : coords;
-      },
-      getIcon: () => ({
-        url: iconUrl,
-        width: 143,
-        height: 143,
-        anchorY: 143
-      }),
-      sizeScale: 7,
-      getSize: d => (d.id === selectedId ? 10 : 5),
-      getColor: [255, 140, 0],
-      onClick: info => {
-        if (info.object) {
-          const coords = info.coordinate || info.object.geometry.coordinates;
-          if (!coords || coords.length < 2) return;
-          const [longitude, latitude] = coords;
-          const clickedId = info.object.id;
-          pendingIdRef.current = clickedId;
+  const generateBoundaryCircle = () => Array.from({ length: 360 }, (_, i) => { const a = (i * Math.PI) / 180; return [CENTER_POINT.longitude + (MAX_RADIUS * Math.cos(a) / Math.cos(CENTER_POINT.latitude * Math.PI / 180)), CENTER_POINT.latitude + MAX_RADIUS * Math.sin(a)]; });
 
-          setHoverInfo({
-            name: info.object.properties.Name,
-            longitude,
-            latitude
-          });
+  const layers = [
+    new PathLayer({ id: 'boundary-circle', data: [{ path: generateBoundaryCircle(), color: BOUNDARY_COLOR }], getPath: d => d.path, getColor: d => d.color, getWidth: 2, widthMinPixels: 1, pickable: false }),
+    new IconLayer({
+      id: 'nationalParksIcons', // Consider static ID for stability
+      data: NationalParksData.features, pickable: true,
+      getPosition: d => { const c = d.geometry.coordinates; return Array.isArray(c[0]) ? c[0] : c; },
+      getIcon: () => ({ url: iconUrl, width: 143, height: 143, anchorY: 143 }),
+      sizeScale: 9, 
+      //getSize: d => (d.id === selectedId ? 15 : 8), // Simpler for now
+      getSize: d => (d.id === selectedId ? 30 : (pendingIdRef.current === d.id && isPinTransition ? 30 : 8)), // Makes new pin big during transition
+      getColor: [255, 140, 0],
+      onClick: (info) => {
+        if (info.object) {
+          const coords = info.object.geometry.coordinates; if (!coords || coords.length < 2) return;
+          const [longitude, latitude] = (Array.isArray(coords[0]) && typeof coords[0][0] === 'number') ? coords[0] : coords;
+          const clickedId = info.object.id;
           
-          targetPositionRef.current = { latitude, longitude, zoom: Math.min(viewState.zoom + 1, 16) };
-          targetViewRef.current = { pitch: 75, bearing: viewState.bearing + 90 };
+          pendingIdRef.current = clickedId;
+          setSelectedPin({ name: info.object.properties.Name, longitude, latitude });
+          setIsLoading(true); if (loadingTimeoutRef.current) clearTimeout(loadingTimeoutRef.current);
+          setHoverInfo({ name: info.object.properties.Name, longitude, latitude });
+          
+          shouldStayAtPinPositionRef.current = true; setIsPinTransition(true);
           leftDragVelocityRef.current = { bearing: 0, pitch: 0, latitude: 0, longitude: 0, zoom: 0 };
           floatingVelocityRef.current = { x: 0, y: 0 };
           
-          // Reset zoom references for floating effect
-          baseZoomRef.current = Math.min(viewState.zoom + 1, 16);
-          tempZoomOffsetRef.current = 0;
-          isZoomDraggingRef.current = false;
-
+          const pinTargetZoom = 16, pinTargetPitch = 60, pinTargetBearing = 20;
+          targetPositionRef.current = { latitude, longitude, zoom: pinTargetZoom };
+          targetViewRef.current = { pitch: pinTargetPitch, bearing: pinTargetBearing };
+          baseZoomRef.current = pinTargetZoom;
+          
           setViewState(prev => ({
-            ...prev,
-            longitude,
-            latitude,
-            zoom: Math.min(prev.zoom + 1, 16),
-            pitch: 75,
-            bearing: prev.bearing + 90,
-            transitionDuration: 2000,
-            transitionInterpolator: new FlyToInterpolator(),
+            ...prev, longitude, latitude, zoom: pinTargetZoom, pitch: pinTargetPitch, bearing: pinTargetBearing,
+            transitionDuration: 1500, transitionInterpolator: new FlyToInterpolator({speed: 1.5}),
             onTransitionEnd: () => {
               setSelectedId(pendingIdRef.current);
-              setViewState(curr => ({ ...curr, zoom: Math.min(curr.zoom, 15.95) }));
-            }
+              shouldStayAtPinPositionRef.current = true;
+              targetPositionRef.current = { latitude, longitude, zoom: pinTargetZoom }; // Ensure correct target
+              targetViewRef.current = { pitch: pinTargetPitch, bearing: pinTargetBearing }; // Ensure correct target
+              baseZoomRef.current = pinTargetZoom;
+              loadingTimeoutRef.current = setTimeout(() => { setIsLoading(false); setIsPinTransition(false); }, 100);
+            },
+            onTransitionInterrupt: () => { setIsPinTransition(false); /* Or handle more gracefully */ }
           }));
         }
       }
     })
-  ];
+  ].filter(Boolean);
 
   return (
-    <div
-      ref={wrapperRef}
-      style={{
-        position: 'relative',
-        width: '100vw',
-        height: '100vh',
-        margin: 0,
-        padding: 0,
-        overflow: 'hidden',
-        cursor: isDragging ? 'grabbing' : 'grab'
-      }}
-    >
-      <canvas
-        ref={canvasRef}
-        style={{
-          position: 'absolute', top: 0, left: 0, width: '100vw', height: '100vh',
-          zIndex: -1, pointerEvents: 'none'
-        }}
-      />
+    <div ref={wrapperRef} style={{ /* ... styles ... */ position: 'relative', width: '100vw', height: '100vh', margin: 0, padding: 0, overflow: 'hidden', cursor: isDragging ? 'grabbing' : 'grab', backgroundColor: '#1a1a2e' }}>
+      {/* <canvas ref={canvasRef} ... /> */} {/* Removed canvasRef as it's not used unless for other drawings */}
       <DeckGL
-        ref={deckRef}
-        viewState={viewState}
-        controller={{
-            dragPan: false, dragRotate: false, scrollZoom: true, touchZoom: true,
-            touchRotate: true, doubleClickZoom: true, keyboard: false, inertia: false
-        }}
-        layers={layers}
-        width="100%"
-        height="100%"
-        style={{ position: 'absolute', left: 0, top: 0 }}
+        ref={deckRef} viewState={viewState}
+        controller={{ dragPan: false, dragRotate: false, scrollZoom: false, touchZoom: false, touchRotate: false, doubleClickZoom: true, keyboard: false, inertia: false }}
+        layers={layers} width="100%" height="100%" style={{ position: 'absolute', left: 0, top: 0 }}
+        parameters={{ clearColor: [0.05, 0.05, 0.05, 1.0] }}
         onViewStateChange={({ viewState: newDeckViewState, interactionState }) => {
-           if (!interactionState.inTransition && !isDraggingRef.current) {
-             setViewState(newDeckViewState);
-             targetPositionRef.current = {
-                 latitude: newDeckViewState.latitude,
-                 longitude: newDeckViewState.longitude,
-                 zoom: newDeckViewState.zoom
-             };
-             targetViewRef.current = {
-                 pitch: newDeckViewState.pitch,
-                 bearing: newDeckViewState.bearing,
-             };
-           } else if (interactionState.inTransition) {
-             setViewState(newDeckViewState);
-           }
-        }}
-        onClick={info => {
-          if (!info.object) {
-            // Optional: clear hover/selection on map click
-            // setHoverInfo(null);
-            // setSelectedId(null);
+          deckInteractionStateRef.current = interactionState; // Keep track of DeckGL's transition state
+          if (interactionState.inTransition) {
+            setViewState(newDeckViewState); // If DeckGL is transitioning, let it update viewState
+          } else { // DeckGL is idle or a transition just ended
+            if (!(isDraggingRef.current || isTouchDraggingRef.current)) { // If not user-dragging
+              if (!shouldStayAtPinPositionRef.current) { // And not supposed to stay at a pin
+                // Update our targets from DeckGL's settled state (for free exploration)
+                targetPositionRef.current = { latitude: newDeckViewState.latitude, longitude: newDeckViewState.longitude, zoom: newDeckViewState.zoom };
+                targetViewRef.current = { pitch: newDeckViewState.pitch, bearing: newDeckViewState.bearing };
+              }
+              // If shouldStayAtPinPositionRef.current is true, targets are already set (e.g. to pin's 65 pitch)
+              // and should not be overwritten by newDeckViewState here.
+            }
+            setViewState(newDeckViewState); // Always update React's viewState to reflect DeckGL
           }
         }}
+        onClick={info => { if (!info.object) { setSelectedId(null); setSelectedPin(null); setHoverInfo(null); shouldStayAtPinPositionRef.current = false; /* playInitialZoom(); */ } }}
+        pickingRadius={30}
       >
-        <Map
-          mapboxAccessToken={MAPBOX_TOKEN}
-          mapStyle={MapStyle}
-          width="100%"
-          height="100%"
-        />
+        <Map mapboxAccessToken={MAPBOX_TOKEN} mapStyle={MapStyle} width="100%" height="100%" onLoad={() => setIsLoading(false)} />
       </DeckGL>
-
-      <div className="smoothness-controls" style={{
-        position: 'absolute', bottom: '80px', right: '20px', background: 'rgba(0,0,0,0.8)',
-        padding: '15px', color: 'white', borderRadius: '8px', zIndex: 1000,
-        maxWidth: '320px', fontSize: '12px', display: isMobile ? 'none' : 'block',
-        maxHeight: '80vh', overflowY: 'auto'
-      }}>
+      {/* ... UI Controls, Tooltip, Styles ... (largely unchanged) ... */}
+      <div className="smoothness-controls" style={{ position: 'absolute', bottom: '80px', right: '20px', background: 'rgba(0,0,0,0.8)', padding: '15px', color: 'white', borderRadius: '8px', zIndex: 1000, maxWidth: '320px', fontSize: '12px', display: isMobile ? 'none' : 'block', maxHeight: '80vh', overflowY: 'auto' }}>
         <h4 style={{ margin: '0 0 10px 0', fontSize: '14px' }}>Enhanced Camera Controls</h4>
-        
-        {/* Floating Movement Controls */}
         <div style={{marginBottom: '12px', padding: '8px', background: 'rgba(255,255,255,0.1)', borderRadius: '4px'}}>
           <h5 style={{ margin: '0 0 8px 0', fontSize: '13px', color: '#ffd700' }}>Floating Movement</h5>
-          <div style={{marginBottom: '6px'}}>
-            <label style={{display: 'block', marginBottom: '2px'}}>
-              Floating Strength: {smoothnessSettings.floatingStrength.toFixed(2)}
-            </label>
-            <input
-              type="range"
-              min="0.01"
-              max="0.2"
-              step="0.01"
-              value={smoothnessSettings.floatingStrength}
-              onChange={(e) => setSmoothnessSettings(s => ({ ...s, floatingStrength: parseFloat(e.target.value) }))}
-            />
-          </div>
-          <div style={{marginBottom: '6px'}}>
-            <label style={{display: 'block', marginBottom: '2px'}}>
-              Floating Damping: {smoothnessSettings.floatingDamping.toFixed(2)}
-            </label>
-            <input
-              type="range"
-              min="0.85"
-              max="0.98"
-              step="0.01"
-              value={smoothnessSettings.floatingDamping}
-              onChange={(e) => setSmoothnessSettings(s => ({ ...s, floatingDamping: parseFloat(e.target.value) }))}
-            />
-          </div>
-          <div style={{marginBottom: '6px'}}>
-            <label style={{display: 'block', marginBottom: '2px'}}>
-              Mouse Velocity Influence: {smoothnessSettings.mouseVelocityInfluence.toFixed(2)}
-            </label>
-            <input
-              type="range"
-              min="0.1"
-              max="1.0"
-              step="0.1"
-              value={smoothnessSettings.mouseVelocityInfluence}
-              onChange={(e) => setSmoothnessSettings(s => ({ ...s, mouseVelocityInfluence: parseFloat(e.target.value) }))}
-            />
-          </div>
+          <div><label>Floating Strength: {smoothnessSettings.floatingStrength.toFixed(2)}</label><input type="range" min="0.01" max="0.2" step="0.01" value={smoothnessSettings.floatingStrength} onChange={(e) => setSmoothnessSettings(s => ({ ...s, floatingStrength: parseFloat(e.target.value) }))} /></div>
+          <div><label>Floating Damping: {smoothnessSettings.floatingDamping.toFixed(2)}</label><input type="range" min="0.85" max="0.98" step="0.01" value={smoothnessSettings.floatingDamping} onChange={(e) => setSmoothnessSettings(s => ({ ...s, floatingDamping: parseFloat(e.target.value) }))} /></div>
+          <div><label>Mouse Velocity Influence: {smoothnessSettings.mouseVelocityInfluence.toFixed(2)}</label><input type="range" min="0.01" max="1.0" step="0.01" value={smoothnessSettings.mouseVelocityInfluence} onChange={(e) => setSmoothnessSettings(s => ({ ...s, mouseVelocityInfluence: parseFloat(e.target.value) }))} /></div>
         </div>
-
-        {/* Enhanced Drag Controls */}
         <div style={{marginBottom: '12px', padding: '8px', background: 'rgba(255,255,255,0.1)', borderRadius: '4px'}}>
           <h5 style={{ margin: '0 0 8px 0', fontSize: '13px', color: '#87ceeb' }}>Drag Controls</h5>
-          <div style={{marginBottom: '6px'}}>
-            <label style={{display: 'block', marginBottom: '2px'}}>
-              Rotation Sensitivity: {smoothnessSettings.leftDragBearingSensitivity.toFixed(2)}
-            </label>
-            <input
-              type="range"
-              min="0.05"
-              max="0.5"
-              step="0.01"
-              value={smoothnessSettings.leftDragBearingSensitivity}
-              onChange={(e) => setSmoothnessSettings(s => ({ ...s, leftDragBearingSensitivity: parseFloat(e.target.value) }))}
-            />
-          </div>
-          <div style={{marginBottom: '6px'}}>
-            <label style={{display: 'block', marginBottom: '2px'}}>
-              Drag Smoothness: {smoothnessSettings.dragLerpFactor.toFixed(2)}
-            </label>
-            <input type="range" min="0.05" max="0.3" step="0.01"
-              value={smoothnessSettings.dragLerpFactor}
-              onChange={(e) => setSmoothnessSettings(s => ({ ...s, dragLerpFactor: parseFloat(e.target.value) }))}
-            />
-          </div>
-          <div style={{marginBottom: '6px'}}>
-            <label style={{display: 'block', marginBottom: '2px'}}>
-              Inertia Damping: {smoothnessSettings.leftDampingFactor.toFixed(2)}
-            </label>
-            <input type="range" min="0.8" max="0.98" step="0.01"
-              value={smoothnessSettings.leftDampingFactor}
-              onChange={(e) => setSmoothnessSettings(s => ({ ...s, leftDampingFactor: parseFloat(e.target.value) }))}
-            />
-          </div>
+          <div><label>Rotation Sensitivity: {smoothnessSettings.leftDragBearingSensitivity.toFixed(2)}</label><input type="range" min="0.05" max="0.5" step="0.01" value={smoothnessSettings.leftDragBearingSensitivity} onChange={(e) => setSmoothnessSettings(s => ({ ...s, leftDragBearingSensitivity: parseFloat(e.target.value) }))} /></div>
+          <div><label>Drag Smoothness: {smoothnessSettings.dragLerpFactor.toFixed(2)}</label><input type="range" min="0.01" max="0.3" step="0.01" value={smoothnessSettings.dragLerpFactor} onChange={(e) => setSmoothnessSettings(s => ({ ...s, dragLerpFactor: parseFloat(e.target.value) }))} /></div>
+          <div><label>Inertia Damping: {smoothnessSettings.leftDampingFactor.toFixed(2)}</label><input type="range" min="0.8" max="0.98" step="0.01" value={smoothnessSettings.leftDampingFactor} onChange={(e) => setSmoothnessSettings(s => ({ ...s, leftDampingFactor: parseFloat(e.target.value) }))} /></div>
         </div>
-
-        {/* Enhanced Zoom Controls */}
-        <div style={{marginBottom: '12px', padding: '8px', background: 'rgba(255,255,255,0.1)', borderRadius: '4px'}}>
-          <h5 style={{ margin: '0 0 8px 0', fontSize: '13px', color: '#98fb98' }}>Floating Zoom Controls</h5>
-          <div style={{marginBottom: '6px'}}>
-            <label style={{display: 'block', marginBottom: '2px'}}>
-              Zoom Sensitivity: {smoothnessSettings.verticalZoomSensitivity.toFixed(3)}
-            </label>
-            <input
-              type="range"
-              min="0.0005"
-              max="0.005"
-              step="0.0005"
-              value={smoothnessSettings.verticalZoomSensitivity}
-              onChange={(e) => setSmoothnessSettings(s => ({ ...s, verticalZoomSensitivity: parseFloat(e.target.value) }))}
-            />
-          </div>
-          <div style={{marginBottom: '6px'}}>
-            <label style={{display: 'block', marginBottom: '2px'}}>
-              Float Range: ±{smoothnessSettings.zoomFloatRange.toFixed(1)}
-            </label>
-            <input
-              type="range"
-              min="1"
-              max="5"
-              step="0.5"
-              value={smoothnessSettings.zoomFloatRange}
-              onChange={(e) => setSmoothnessSettings(s => ({ ...s, zoomFloatRange: parseFloat(e.target.value) }))}
-            />
-          </div>
-          <div style={{marginBottom: '6px'}}>
-            <label style={{display: 'block', marginBottom: '2px'}}>
-              Return Speed: {smoothnessSettings.zoomReturnSpeed.toFixed(2)}
-            </label>
-            <input
-              type="range"
-              min="0.05"
-              max="0.3"
-              step="0.05"
-              value={smoothnessSettings.zoomReturnSpeed}
-              onChange={(e) => setSmoothnessSettings(s => ({ ...s, zoomReturnSpeed: parseFloat(e.target.value) }))}
-            />
-          </div>
-          <div style={{marginBottom: '6px'}}>
-            <label style={{display: 'block', marginBottom: '2px'}}>
-              Min Zoom: {smoothnessSettings.minZoom}
-            </label>
-            <input
-              type="range"
-              min="1"
-              max="5"
-              step="1"
-              value={smoothnessSettings.minZoom}
-              onChange={(e) => setSmoothnessSettings(s => ({ ...s, minZoom: parseInt(e.target.value) }))}
-            />
-          </div>
-          <div style={{marginBottom: '6px'}}>
-                        <label style={{display: 'block', marginBottom: '2px'}}>
-              Max Zoom: {smoothnessSettings.maxZoom}
-            </label>
-            <input
-              type="range"
-              min="15"
-              max="22"
-              step="1"
-              value={smoothnessSettings.maxZoom}
-              onChange={(e) => setSmoothnessSettings(s => ({ ...s, maxZoom: parseInt(e.target.value) }))}
-            />
-          </div>
-          <div style={{fontSize: '11px', color: '#ccc', marginTop: '8px'}}>
-            Current: Base {baseZoomRef.current.toFixed(1)} + Offset {tempZoomOffsetRef.current.toFixed(2)} = {(baseZoomRef.current + tempZoomOffsetRef.current).toFixed(1)}
-          </div>
-        </div>
-
-        {/* Forward Movement */}
-        <div style={{marginBottom: '8px'}}>
-          <label style={{display: 'block', marginBottom: '2px'}}>
-            Forward Movement Speed: {smoothnessSettings.forwardMovementSpeed.toExponential(1)}
-          </label>
-          <input type="range" min="0.001" max="0.02" step="0.001"
-            value={smoothnessSettings.forwardMovementSpeed}
-            onChange={(e) => setSmoothnessSettings(s => ({ ...s, forwardMovementSpeed: parseFloat(e.target.value) }))}
-          />
-        </div>
-
-        {/* Ambient Movement Toggle */}
-        <div style={{marginBottom: '8px'}}>
-          <label style={{display: 'flex', alignItems: 'center', marginBottom: '5px'}}>
-            <input type="checkbox" checked={ambientMovementEnabled}
-              onChange={(e) => setAmbientMovementEnabled(e.target.checked)} style={{marginRight: '8px'}}
-            /> Enable Enhanced Ambient Movement
-          </label>
-        </div>
-
-        {ambientMovementEnabled && (
-          <div style={{marginBottom: '12px', padding: '8px', background: 'rgba(255,255,255,0.1)', borderRadius: '4px'}}>
-            <h5 style={{ margin: '0 0 8px 0', fontSize: '13px', color: '#dda0dd' }}>Ambient Settings</h5>
-            <div style={{marginBottom: '6px'}}>
-              <label>Ambient Strength: {smoothnessSettings.ambientStrength.toFixed(2)}</label>
-              <input type="range" min="0.01" max="0.15" step="0.01" value={smoothnessSettings.ambientStrength}
-                onChange={(e) => setSmoothnessSettings(s => ({ ...s, ambientStrength: parseFloat(e.target.value) }))} />
-            </div>
-            <div style={{marginBottom: '6px'}}>
-              <label>Max Pitch Effect: {smoothnessSettings.ambientMaxPitch.toFixed(0.1)}°</label>
-              <input type="range" min="0.1" max="2" step="0.1" value={smoothnessSettings.ambientMaxPitch}
-                onChange={(e) => setSmoothnessSettings(s => ({ ...s, ambientMaxPitch: parseFloat(e.target.value) }))} />
-            </div>
-            <div style={{marginBottom: '6px'}}>
-              <label>Max Bearing Effect: {smoothnessSettings.ambientMaxBearing.toFixed(0.1)}°</label>
-              <input type="range" min="0.1" max="3" step="0.1" value={smoothnessSettings.ambientMaxBearing}
-                onChange={(e) => setSmoothnessSettings(s => ({ ...s, ambientMaxBearing: parseFloat(e.target.value) }))} />
-            </div>
-            <div style={{marginBottom: '6px'}}>
-              <label>Ambient Smoothness: {smoothnessSettings.ambientSmoothness.toFixed(2)}</label>
-              <input type="range" min="0.85" max="0.99" step="0.01" value={smoothnessSettings.ambientSmoothness}
-                onChange={(e) => setSmoothnessSettings(s => ({ ...s, ambientSmoothness: parseFloat(e.target.value) }))} />
-            </div>
-          </div>
-        )}
-
-        {/* Manual Camera Controls */}
+        <div><label>Forward Movement Speed: {smoothnessSettings.forwardMovementSpeed.toExponential(1)}</label><input type="range" min="0.001" max="0.1" step="0.001" value={smoothnessSettings.forwardMovementSpeed} onChange={(e) => setSmoothnessSettings(s => ({ ...s, forwardMovementSpeed: parseFloat(e.target.value) }))} /></div>
+        <div><label><input type="checkbox" checked={ambientMovementEnabled} onChange={(e) => setAmbientMovementEnabled(e.target.checked)} /> Enable Enhanced Ambient Movement</label></div>
+        {ambientMovementEnabled && (<div style={{marginBottom: '12px', padding: '8px', background: 'rgba(255,255,255,0.1)', borderRadius: '4px'}}>
+          <h5 style={{ margin: '0 0 8px 0', fontSize: '13px', color: '#dda0dd' }}>Ambient Settings</h5>
+          <div><label>Ambient Strength: {smoothnessSettings.ambientStrength.toFixed(2)}</label><input type="range" min="0.01" max="0.15" step="0.01" value={smoothnessSettings.ambientStrength} onChange={(e) => setSmoothnessSettings(s => ({ ...s, ambientStrength: parseFloat(e.target.value) }))} /></div>
+          <div><label>Max Pitch Effect: {smoothnessSettings.ambientMaxPitch.toFixed(1)}°</label><input type="range" min="0.1" max="2" step="0.1" value={smoothnessSettings.ambientMaxPitch} onChange={(e) => setSmoothnessSettings(s => ({ ...s, ambientMaxPitch: parseFloat(e.target.value) }))} /></div>
+          <div><label>Max Bearing Effect: {smoothnessSettings.ambientMaxBearing.toFixed(1)}°</label><input type="range" min="0.1" max="3" step="0.1" value={smoothnessSettings.ambientMaxBearing} onChange={(e) => setSmoothnessSettings(s => ({ ...s, ambientMaxBearing: parseFloat(e.target.value) }))} /></div>
+          <div><label>Ambient Smoothness: {smoothnessSettings.ambientSmoothness.toFixed(2)}</label><input type="range" min="0.85" max="0.99" step="0.01" value={smoothnessSettings.ambientSmoothness} onChange={(e) => setSmoothnessSettings(s => ({ ...s, ambientSmoothness: parseFloat(e.target.value) }))} /></div>
+        </div>)}
         <div style={{marginBottom: '12px', padding: '8px', background: 'rgba(255,255,255,0.1)', borderRadius: '4px'}}>
           <h5 style={{ margin: '0 0 8px 0', fontSize: '13px', color: '#ffa500' }}>Manual Controls</h5>
-          <div style={{marginBottom: '6px'}}>
-            <label style={{display: 'block', marginBottom: '2px'}}>
-              Camera Pitch: {viewState.pitch.toFixed(1)}°
-            </label>
-            <input
-              type="range"
-              min="0"
-              max="85"
-              step="1"
-              value={viewState.pitch}
-              onChange={(e) => {
-                const newPitch = parseFloat(e.target.value);
-                setViewState(prev => ({ ...prev, pitch: newPitch }));
-                targetViewRef.current.pitch = newPitch;
-              }}
-            />
-          </div>
-          <div style={{marginBottom: '6px'}}>
-            <label style={{display: 'block', marginBottom: '2px'}}>
-              Camera Bearing: {viewState.bearing.toFixed(1)}°
-            </label>
-            <input
-              type="range"
-              min="-180"
-              max="180"
-              step="1"
-              value={viewState.bearing}
-              onChange={(e) => {
-                const newBearing = parseFloat(e.target.value);
-                setViewState(prev => ({ ...prev, bearing: newBearing }));
-                targetViewRef.current.bearing = newBearing;
-              }}
-            />
-          </div>
-          <div style={{marginBottom: '6px'}}>
-            <label style={{display: 'block', marginBottom: '2px'}}>
-              Zoom Level: {viewState.zoom.toFixed(1)}
-            </label>
-            <input
-              type="range"
-              min={smoothnessSettings.minZoom}
-              max={smoothnessSettings.maxZoom}
-              step="0.1"
-              value={viewState.zoom}
-              onChange={(e) => {
-                const newZoom = parseFloat(e.target.value);
-                setViewState(prev => ({ ...prev, zoom: newZoom }));
-                targetPositionRef.current.zoom = newZoom;
-              }}
-            />
-          </div>
+          <div><label>Camera Pitch: {viewState.pitch.toFixed(1)}°</label><input type="range" min="0" max="85" step="1" value={viewState.pitch} onChange={(e) => { const v = parseFloat(e.target.value); shouldStayAtPinPositionRef.current = false; targetViewRef.current.pitch = v; setViewState(p => ({ ...p, pitch: v, transitionDuration: 0 })); }} /></div>
+          <div><label>Camera Bearing: {viewState.bearing.toFixed(1)}°</label><input type="range" min="-180" max="180" step="1" value={viewState.bearing} onChange={(e) => { const v = parseFloat(e.target.value); shouldStayAtPinPositionRef.current = false; targetViewRef.current.bearing = v; setViewState(p => ({ ...p, bearing: v, transitionDuration: 0 })); }} /></div>
+          <div><label>Zoom Level: {viewState.zoom.toFixed(1)}</label><input type="range" min={smoothnessSettings.minZoom} max={smoothnessSettings.maxZoom} step="0.1" value={viewState.zoom} onChange={(e) => { const v = parseFloat(e.target.value); shouldStayAtPinPositionRef.current = false; targetPositionRef.current.zoom = v; baseZoomRef.current = v; setViewState(p => ({ ...p, zoom: v, transitionDuration: 0 })); }} /></div>
         </div>
-
-        {/* Global Settings */}
-        <div style={{marginBottom: '8px'}}>
-          <label style={{display: 'block', marginBottom: '2px'}}>
-            Global Smoothness: {smoothnessSettings.globalSmoothness.toFixed(2)}
-          </label>
-          <input
-            type="range"
-            min="0.7"
-            max="0.95"
-            step="0.05"
-            value={smoothnessSettings.globalSmoothness}
-            onChange={(e) => setSmoothnessSettings(s => ({ ...s, globalSmoothness: parseFloat(e.target.value) }))}
-          />
+        <div><label>Global Smoothness: {smoothnessSettings.globalSmoothness.toFixed(2)}</label><input type="range" min="0.7" max="0.95" step="0.05" value={smoothnessSettings.globalSmoothness} onChange={(e) => setSmoothnessSettings(s => ({ ...s, globalSmoothness: parseFloat(e.target.value) }))} /></div>
+        <div style={{marginBottom: '12px', padding: '8px', background: 'rgba(255,255,255,0.1)', borderRadius: '4px'}}>
+          <h5 style={{ margin: '0 0 8px 0', fontSize: '13px', color: '#ff9966' }}>Dynamic Pitch Controls</h5>
+          <div><label><input type="checkbox" checked={smoothnessSettings.dynamicPitchEnabled} onChange={(e) => setSmoothnessSettings(s => ({ ...s, dynamicPitchEnabled: e.target.checked }))} /> Enable Dynamic Pitch</label></div>
+          <div><label>Min Zoom Level: {smoothnessSettings.pitchZoomThresholdLow.toFixed(1)}</label><input type="range" min="1" max="13" step="0.5" value={smoothnessSettings.pitchZoomThresholdLow} onChange={(e) => setSmoothnessSettings(s => ({ ...s, pitchZoomThresholdLow: parseFloat(e.target.value) }))} /></div>
+          <div><label>Min Pitch: {smoothnessSettings.minPitchValue.toFixed(0)}°</label><input type="range" min="0" max="45" step="1" value={smoothnessSettings.minPitchValue} onChange={(e) => setSmoothnessSettings(s => ({ ...s, minPitchValue: parseFloat(e.target.value) }))} /></div>
+          <div><label>Max Pitch: {smoothnessSettings.maxPitchValue.toFixed(0)}°</label><input type="range" min="30" max="85" step="1" value={smoothnessSettings.maxPitchValue} onChange={(e) => setSmoothnessSettings(s => ({ ...s, maxPitchValue: parseFloat(e.target.value) }))} /></div>
+          <div><label>Pitch Transition Speed: {(pitchSmoothness * 100).toFixed(0)}%</label><input type="range" min="0.01" max="0.2" step="0.01" value={pitchSmoothness} onChange={(e) => setPitchSmoothness(parseFloat(e.target.value))} /></div>
         </div>
-
-        {/* Reset Button */}
-        <button 
-          onClick={() => setSmoothnessSettings({
-            floatingStrength: 0.08,
-            floatingDamping: 0.94,
-            floatingMaxInfluence: 15,
-            mouseVelocityInfluence: 0.3,
-            leftDampingFactor: 0.92,
-            leftDragBearingSensitivity: 0.12,
-            leftSmoothFactor: 0.08,
-            dragLerpFactor: 0.12,
-            verticalZoomSensitivity: 0.008,
-            zoomDamping: 0.88,
-            minZoom: 1,
-            maxZoom: 18,
-            ambientStrength: 0.06,
-            ambientMaxPitch: 8,
-            ambientMaxBearing: 12,
-            ambientSmoothness: 0.96,
-            ambientMaxLatOffset: 0.008,
-            ambientMaxLngOffset: 0.008,
-            forwardMovementSpeed: 0.006,
-            forwardMovementDamping: 0.94,
-            globalSmoothness: 0.85,
-            stopThreshold: 0.001
-          })}
-          style={{
-            width: '100%',
-            padding: '8px',
-            background: '#444',
-            color: 'white',
-            border: 'none',
-            borderRadius: '4px',
-            cursor: 'pointer',
-            fontSize: '12px'
-          }}
-        >
-          Reset to Defaults
-        </button>
+        <button onClick={() => { setSmoothnessSettings({ /* ... defaults ... */ floatingStrength: 0.03, floatingDamping: 0.98, floatingMaxInfluence: 15, mouseVelocityInfluence: 0.01, leftDampingFactor: 0.92, leftDragBearingSensitivity: 0.20, leftSmoothFactor: 0.08, dragLerpFactor: 0.02, verticalZoomSensitivity: 0.001, zoomFloatRange: 1, zoomReturnSpeed: 0.1, zoomReturnDamping: 0.85, zoomReturnCurve: 2.0, zoomDamping: 0.88, minZoom: 11, maxZoom: 16, ambientStrength: 0.02, ambientMaxPitch: 0.1, ambientMaxBearing: 0.2, ambientSmoothness: 0.98, ambientMaxLatOffset: 0.002, ambientMaxLngOffset: 0.001, forwardMovementSpeed: 0.06, forwardMovementDamping: 0.94, globalSmoothness: 0.85, stopThreshold: 0.001, boundaryBounceFactor: 0.3, boundaryResistance: 0.8, dynamicPitchEnabled: true, minPitchValue: 0, maxPitchValue: 75, pitchZoomThresholdLow: 11, pitchZoomThresholdHigh: 14, }); setPitchSmoothness(0.05); }} style={{ width: '100%', padding: '8px', background: '#444', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '12px' }}>Reset to Defaults</button>
       </div>
-
-      {hoverInfo && tooltipPos && (
-        <div
-          className="tooltip tooltip-visible tooltip-animate"
-          style={{
-            position: 'absolute',
-            top: tooltipPos.y, 
-            left: tooltipPos.x,
-            transform: 'translate(-50%, -120%)', 
-            zIndex: 1001
-          }}
-        >
-          <strong>{hoverInfo.name}</strong>
-          <a href='#' target='_blank' rel="noopener noreferrer" style={{ color: '#fff', display: 'block' }}>Discover</a>
-        </div>
-      )}
-      
-      <div className='live-back-btns'>
-        <ul>
-          <li><a href="#" onClick={(e) => {
-            e.preventDefault();
-            playInitialZoom(1000);
-          }}><img src={mapRevertIcon} alt="Map" /></a></li>
-          <li><a href="#" target='_blank'  rel="noopener noreferrer"><img src={liveTrackIcon} alt="Live Track" /></a></li>
-        </ul>
-      </div>
-
-      <style>{`
-        body, html { margin: 0; padding: 0; overflow: hidden; width: 100%; height: 100%; position: fixed; }
-        #root { width: 100%; height: 100%; overflow: hidden; position: fixed; }
-        .live-back-btns { position: absolute; top: 20px; right: 20px; z-index: 9999; }
-        .live-back-btns ul { display: flex; gap: 25px; margin: 0; padding: 0; list-style: none; }
-        .smoothness-controls::-webkit-scrollbar { width: 6px; }
-        .smoothness-controls::-webkit-scrollbar-track { background: rgba(255,255,255,0.1); border-radius: 3px; }
-        .smoothness-controls::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.3); border-radius: 3px; }
-        .smoothness-controls::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.5); }
-        .tooltip {
-          background: rgba(0,0,0, 0.6);
-          padding: 15px 25px;
-          border-radius: 8px;
-          box-shadow: 0 6px 15px rgba(0, 0, 0, 0.3);
-          opacity: 0;
-          transition: opacity 0.3s ease-out, transform 0.3s ease-out;
-          z-index: 1001;
-          text-align: center;
-          color: white;
-        }
-        .tooltip strong { font-size: 28px; line-height: 32px; display: block; margin-bottom: 5px; }
-        .tooltip a { font-size: 16px; line-height: 20px; color: #eee; text-decoration: underline; }
-        .tooltip-visible { opacity: 1; transform: translate(-50%, -120%) scale(1); }
-        .tooltip-animate { animation: fadeInUpTooltip 0.3s ease-out; }
-        @keyframes fadeInUpTooltip {
-          0% { opacity: 0; transform: translate(-50%, -110%) scale(0.95); }
-          100% { opacity: 1; transform: translate(-50%, -120%) scale(1); }
-        }
-        @media only screen and (max-width: 992px) {
-          .tooltip strong { font-size: 22px; line-height: 26px; }
-          .tooltip a { font-size: 14px; line-height: 18px; }
-          .tooltip { padding: 10px 15px; }
-        }
-        @media only screen and (max-width: 767px) {
-          .tooltip strong { font-size: 18px; line-height: 22px; }
-          .tooltip a { font-size: 12px; line-height: 16px; }
-        }
+      {selectedPin && tooltipPos && ( <div className="tooltip tooltip-center-screen tooltip-visible tooltip-animate"> <strong>{selectedPin.name}</strong> <a href='#' target='_blank' rel="noopener noreferrer" style={{ color: '#fff', display: 'block' }}>Discover</a> </div> )}
+      <div className='live-back-btns'> <ul> <li><a href="#" onClick={(e) => { e.preventDefault(); playInitialZoom(1000); }}><img src={mapRevertIcon} alt="Map" /></a></li> <li><a href="#" target='_blank' rel="noopener noreferrer"><img src={liveTrackIcon} alt="Live Track" /></a></li> </ul> </div>
+      <style>{` /* ... CSS styles ... */
+        body, html { margin: 0; padding: 0; overflow: hidden; width: 100%; height: 100%; position: fixed; } #root { width: 100%; height: 100%; overflow: hidden; position: fixed; }
+        .live-back-btns { position: absolute; top: 20px; right: 20px; z-index: 9999; } .live-back-btns ul { display: flex; gap: 25px; margin: 0; padding: 0; list-style: none; }
+        .smoothness-controls::-webkit-scrollbar { width: 6px; } .smoothness-controls::-webkit-scrollbar-track { background: rgba(255,255,255,0.1); border-radius: 3px; } .smoothness-controls::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.3); border-radius: 3px; } .smoothness-controls::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.5); }
+        .tooltip { background: rgba(0,0,0, 0.3); padding: 25px 35px; border-radius: 12px; box-shadow: 0 8px 25px rgba(0, 0, 0, 0.4); opacity: 0; transition: opacity 0.3s ease-out, transform 0.3s ease-out; z-index: 1001; text-align: center; color: white; }
+        .tooltip-center-screen { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%) scale(0.95); width: 70vw; min-height: 150px; display: flex; flex-direction: column; justify-content: center; align-items: center; }
+        .tooltip strong { font-size: 72px; line-height: 78px; display: block; margin-bottom: 15px; } .tooltip a { font-size: 18px; line-height: 22px; color: gold; text-decoration: none; padding: 8px 15px; border: 0.5px solid gold; border-radius: 5px; transition: background-color 0.2s, color 0.2s; } .tooltip a:hover { background-color: gold; color: black; }
+        .tooltip-visible { opacity: 1; } .tooltip-animate { animation: fadeInUpTooltipCentered 0.4s ease-out forwards; }
+        @keyframes fadeInUpTooltipCentered { 0% { opacity: 0; transform: translate(-50%, -45%) scale(0.95); } 100% { opacity: 1; transform: translate(-50%, -50%) scale(1); } }
+        @media only screen and (max-width: 992px) { .tooltip-center-screen { width: 70vw; padding: 20px; } .tooltip strong { font-size: 46px; line-height: 60px; margin-bottom: 10px;} .tooltip a { font-size: 16px; line-height: 20px; } }
+        @media only screen and (max-width: 767px) { .tooltip-center-screen { width: 80vw; max-width: 280px; padding: 15px; } .tooltip strong { font-size: 32px; line-height: 46px; margin-bottom: 8px;} .tooltip a { font-size: 14px; line-height: 18px; } }
       `}</style>
     </div>
   );
 }
-
 export default App;

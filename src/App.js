@@ -91,7 +91,7 @@ function App() {
   const shouldStayAtPinPositionRef = useRef(false);
 
   const [isAtSmoothDragZoom, setIsAtSmoothDragZoom] = useState(false);
-  const SMOOTH_DRAG_ZOOM_LEVEL = 15.5; // The zoom level where smooth drag is enabled
+  const SMOOTH_DRAG_ZOOM_LEVEL = 16; // The zoom level where smooth drag is enabled
 
   const [smoothnessSettings, setSmoothnessSettings] = useState({
     // Enhanced floating movement settings
@@ -101,8 +101,8 @@ function App() {
     mouseVelocityInfluence: 0.01,
     
     // Enhanced drag settings
-    leftDampingFactor: 0.92,
-    leftDragBearingSensitivity: 0.20,
+    leftDampingFactor: isMobile ? 0.85 : 0.92,
+    leftDragBearingSensitivity: isMobile ? 0.20 : 0.10,
     leftSmoothFactor: 0.08,
     dragLerpFactor: 0.02,
     
@@ -121,9 +121,9 @@ function App() {
     ambientMaxPitch: 0.1,
     ambientMaxBearing: 0.2,
     ambientSmoothness: 0.98,
-    ambientMaxLatOffset: 0.002,
-    ambientMaxLngOffset: 0.001,
-    forwardMovementSpeed: 0.06,
+    ambientMaxLatOffset: 0.0008,
+    ambientMaxLngOffset: 0.0008,
+    forwardMovementSpeed: isMobile ? 0.08 :0.06,
     forwardMovementDamping: 0.94,
     
     // Smoothness enhancement
@@ -135,8 +135,8 @@ function App() {
     boundaryResistance: 0.8,
 
     dynamicPitchEnabled: true,
-    minPitchValue: 0,    // Minimum pitch when fully zoomed out
-    maxPitchValue: 75,   // Maximum pitch when fully zoomed in
+    minPitchValue: 63,    // Minimum pitch when fully zoomed out
+    maxPitchValue: 67,   // Maximum pitch when fully zoomed in
     pitchZoomThresholdLow: 11,  // Zoom level where pitch starts decreasing
     pitchZoomThresholdHigh: 14,
   });
@@ -207,7 +207,7 @@ function App() {
       longitude: CENTER_POINT.longitude,
       latitude: CENTER_POINT.latitude,
       zoom: SMOOTH_DRAG_ZOOM_LEVEL,
-      pitch: 75,
+      pitch: 65,
       bearing: -20,
       transitionDuration: finalDuration,
       transitionInterpolator: new FlyToInterpolator()
@@ -319,7 +319,7 @@ function App() {
               Math.abs(leftDragVelocityRef.current.zoom) > smoothnessSettings.stopThreshold) {
             
             newBearing = currentBearing + leftDragVelocityRef.current.bearing;
-            newPitch = Math.max(0, Math.min(85, currentPitch + leftDragVelocityRef.current.pitch));
+            newPitch = Math.max(0, Math.min(67, currentPitch + leftDragVelocityRef.current.pitch));
             
             // Apply velocity first, then clamp to radius
             let tempLat = currentLatitude + leftDragVelocityRef.current.latitude;
@@ -477,10 +477,8 @@ function App() {
             }
           }
         } else {
-          // When shouldStayAtPinPositionRef.current is true (staying at pin)
           newZoom = currentZoom; // Maintain current zoom (should be pin's zoom)
           
-          // Ensure baseZoomRef is consistent with the pin's target zoom.
           // targetPositionRef.current.zoom is updated when flying to a pin.
           if (baseZoomRef.current !== targetPositionRef.current.zoom) {
             baseZoomRef.current = targetPositionRef.current.zoom;
@@ -508,81 +506,88 @@ function App() {
     return () => cancelAnimationFrame(animationFrameRef.current);
   }, [smoothnessSettings, ambientMovementEnabled]);
 
-    // Enhanced mouse movement tracking with velocity calculation
-    // ... (all your existing code before this useEffect) ...
-
     // Enhanced mouse event handling
     useEffect(() => {
-      // --- START: Existing helper function definitions from your code (handleDragMovement, handleDragEnd etc.) ---
-      // It's important these are defined within or accessible to this useEffect scope
-      // For brevity, I'm assuming they are defined as they were in your original provided code.
-      // If they were outside, they'd need to be passed in or defined here.
-
-      // Helper function to clamp position to radius (ensure it's accessible)
-      // const clampToRadius = (lat, lng) => { ... }; // Defined globally or passed in
-
-      // Clamp velocity to prevent sudden jumps (ensure it's accessible)
-      // const clampVelocity = (velocity, maxValue) => { ... }; // Defined globally or passed in
-
-
       // Common drag movement logic (from your code)
-      const handleDragMovement = (x, y, buttons) => {
-        const prevX = isDraggingRef.current ? dragPrevRef.current.x : touchPrevRef.current.x;
-        const prevY = isDraggingRef.current ? dragPrevRef.current.y : touchPrevRef.current.y;
-        const deltaX = x - prevX;
-        const deltaY = y - prevY;
+      // This is likely inside one of your useEffect hooks
+// (Possibly the one around line 682, or where handleDragMovement is defined)
 
-        if (buttons === 2 && isDraggingRef.current) { // Right-click drag for pitch/bearing (mouse only)
-          targetViewRef.current = {
-            pitch: Math.max(0, Math.min(85, targetViewRef.current.pitch - deltaY * 0.25)),
-            bearing: targetViewRef.current.bearing - deltaX * 0.35
-          };
-        } else if (buttons === 1) { // Left-click drag or touch for rotate, forward/backward, and floating zoom
-          targetViewRef.current = {
-            ...targetViewRef.current,
-            bearing: targetViewRef.current.bearing - deltaX * smoothnessSettings.leftDragBearingSensitivity
-          };
+const handleDragMovement = (x, y, buttons) => {
+    const prevX = isDraggingRef.current ? dragPrevRef.current.x : touchPrevRef.current.x;
+    const prevY = isDraggingRef.current ? dragPrevRef.current.y : touchPrevRef.current.y;
+    const deltaX = x - prevX;
+    const deltaY = y - prevY;
 
-          isZoomDraggingRef.current = true;
-          const zoomDelta = deltaY * smoothnessSettings.verticalZoomSensitivity;
-          
-          tempZoomOffsetRef.current += zoomDelta;
-          tempZoomOffsetRef.current = Math.max(
-            -smoothnessSettings.zoomFloatRange, 
-            Math.min(smoothnessSettings.zoomFloatRange, tempZoomOffsetRef.current)
-          );
-
-          const bearingRad = (targetViewRef.current.bearing * Math.PI) / 180;
-          // Use baseZoomRef for consistent movement speed regardless of tempZoomOffset
-          const zoomFactor = Math.pow(2, baseZoomRef.current); 
-          const effectiveMoveSpeed = smoothnessSettings.forwardMovementSpeed / zoomFactor * 100;
-
-          const moveDistance = deltaY * effectiveMoveSpeed * 0.5;
-
-          const newLat = targetPositionRef.current.latitude + Math.cos(bearingRad) * moveDistance;
-          const newLng = targetPositionRef.current.longitude + Math.sin(bearingRad) * moveDistance;
-          
-          const clamped = clampToRadius(newLat, newLng);
-          
-          targetPositionRef.current = {
-            // Keep existing targetPositionRef.current.zoom unless explicitly changed by zoom logic
-            ...targetPositionRef.current, 
-            latitude: clamped.latitude,
-            longitude: clamped.longitude
-          };
-          
-          if (clamped.isAtBoundary) {
-            tempZoomOffsetRef.current *= 0.5;
-          }
-        }
+    // VVVVVV NEW ADDITION: Hide tooltip on drag start VVVVVV
+    if ((isDraggingRef.current || isTouchDraggingRef.current) && selectedPin) {
+        // Check if movement from the initial drag/touch start point is significant
+        // Use dragStartRef for mouse, touchStartRef for touch
+        const startX = isDraggingRef.current ? dragStartRef.current.x : touchStartRef.current.x;
+        const startY = isDraggingRef.current ? dragStartRef.current.y : touchStartRef.current.y;
         
-        if (isDraggingRef.current) {
-          dragPrevRef.current = { x, y };
+        const movementX = Math.abs(x - startX);
+        const movementY = Math.abs(y - startY);
+        const dragStartThreshold = 3; // Small threshold to confirm drag initiation
+
+        if (movementX > dragStartThreshold || movementY > dragStartThreshold) {
+            if (selectedPin) { // Double check selectedPin to avoid unnecessary calls
+                setSelectedPin(null); // Hide the tooltip
+                // Note: We are NOT setting selectedId to null here.
+                // That's handled in mouseup/touchend or by clicking another pin.
+            }
         }
-        if (isTouchDraggingRef.current) { // Ensure touchPrevRef is also updated
-            touchPrevRef.current = {x,y};
-        }
+    }
+    // ^^^^^^ END OF NEW ADDITION ^^^^^^
+
+    if (buttons === 2 && isDraggingRef.current) { // Right-click drag for pitch/bearing (mouse only)
+      targetViewRef.current = {
+        pitch: Math.max(0, Math.min(85, targetViewRef.current.pitch - deltaY * 0.25)),
+        bearing: targetViewRef.current.bearing - deltaX * 0.35
       };
+    } else if (buttons === 1) { // Left-click drag or touch for rotate, forward/backward, and floating zoom
+      targetViewRef.current = {
+        ...targetViewRef.current,
+        bearing: targetViewRef.current.bearing - deltaX * smoothnessSettings.leftDragBearingSensitivity
+      };
+
+      isZoomDraggingRef.current = true;
+      const zoomDelta = deltaY * smoothnessSettings.verticalZoomSensitivity;
+      
+      tempZoomOffsetRef.current += zoomDelta;
+      tempZoomOffsetRef.current = Math.max(
+        -smoothnessSettings.zoomFloatRange, 
+        Math.min(smoothnessSettings.zoomFloatRange, tempZoomOffsetRef.current)
+      );
+
+      const bearingRad = (targetViewRef.current.bearing * Math.PI) / 180;
+      const zoomFactor = Math.pow(2, baseZoomRef.current); 
+      const effectiveMoveSpeed = smoothnessSettings.forwardMovementSpeed / zoomFactor * 100;
+
+      const moveDistance = deltaY * effectiveMoveSpeed * 0.5;
+
+      const newLat = targetPositionRef.current.latitude + Math.cos(bearingRad) * moveDistance;
+      const newLng = targetPositionRef.current.longitude + Math.sin(bearingRad) * moveDistance;
+      
+      const clamped = clampToRadius(newLat, newLng);
+      
+      targetPositionRef.current = {
+        ...targetPositionRef.current, 
+        latitude: clamped.latitude,
+        longitude: clamped.longitude
+      };
+      
+      if (clamped.isAtBoundary) {
+        tempZoomOffsetRef.current *= 0.5;
+      }
+    }
+    
+    if (isDraggingRef.current) {
+      dragPrevRef.current = { x, y };
+    }
+    if (isTouchDraggingRef.current) { 
+        touchPrevRef.current = {x,y};
+    }
+};
 
 
       // Common drag end logic (from your code, slightly adapted for clarity)
@@ -624,94 +629,124 @@ function App() {
         setIsDragging(false); // For cursor
         isZoomDraggingRef.current = false; // Reset this flag specifically
         tempZoomOffsetRef.current = 0; // Crucial to reset this
-
-        // Target refs will be updated by inertia in smoothUpdate.
-        // If inertia is zero, smoothUpdate will smoothly settle to current viewState.
-        // No need to explicitly set targetPositionRef/targetViewRef here to viewState,
-        // as smoothUpdate will handle the transition from current viewState.
       };
-      // --- END: Existing helper function definitions ---
 
 
       const handleMouseDown = (e) => {
-        if (e.button === 0 || e.button === 2) { // Left or Right mouse button
-          // --- START: MODIFIED SECTION ---
-          const { latitude, longitude, zoom, pitch, bearing } = viewState; // CAPTURE current viewState
+  if (e.button === 0 || e.button === 2) { // Left or Right mouse button
+    const { latitude, longitude, zoom, pitch, bearing } = viewState; // Capture current viewState
 
-          if (selectedId) { // Check if a pin is currently selected
-            setSelectedId(null);
-            setSelectedPin(null);
-            if (hoverInfo) setHoverInfo(null); // Clear hover if it's tied to selection
-          }
-          // --- END: MODIFIED SECTION ---
+    // If a pin is currently selected, we prepare for it to *potentially* be deselected
+    // or for the camera to move. We unlock the camera here.
+    // The actual deselection will be handled by:
+    // 1. IconLayer's onClick (if another pin is clicked)
+    // 2. DeckGL's global onClick (if empty space is clicked)
+    // 3. handleMouseUp (if this mousedown turns into a drag)
+    if (selectedId) {
+      shouldStayAtPinPositionRef.current = false; // Allow camera to move if this mousedown turns into a drag
+    }
+    // DO NOT call setSelectedId(null) or setSelectedPin(null) here.
 
-          isDraggingRef.current = true;
-          setIsDragging(true); // For cursor style
-          // dragStartRef.current = { x: e.clientX, y: e.clientY }; // Not used in provided logic
-          dragPrevRef.current = { x: e.clientX, y: e.clientY };
-          
-          leftDragVelocityRef.current = { bearing: 0, pitch: 0, latitude: 0, longitude: 0, zoom: 0 };
-          floatingVelocityRef.current = { x: 0, y: 0 }; // Reset floating velocity on drag start
-          
-          shouldStayAtPinPositionRef.current = false; // Allow camera to move freely
-          
-          // Initialize targets from the (potentially just unselected pin's) captured viewState
-          targetPositionRef.current = { latitude, longitude, zoom };
-          targetViewRef.current = { pitch, bearing };
-          baseZoomRef.current = zoom; // Use the captured zoom as the base for this drag
-          tempZoomOffsetRef.current = 0; // Reset temporary zoom offset
+    isDraggingRef.current = true;
+    setIsDragging(true); // For cursor style
+    dragStartRef.current = { x: e.clientX, y: e.clientY }; // Store mousedown position
+    dragPrevRef.current = { x: e.clientX, y: e.clientY };
+    
+    // Reset velocities and ensure camera targets are based on current view
+    leftDragVelocityRef.current = { bearing: 0, pitch: 0, latitude: 0, longitude: 0, zoom: 0 };
+    floatingVelocityRef.current = { x: 0, y: 0 };
+    
+    targetPositionRef.current = { latitude, longitude, zoom };
+    targetViewRef.current = { pitch, bearing };
+    baseZoomRef.current = zoom; // Use the current zoom as the base for this drag
+    tempZoomOffsetRef.current = 0; // Reset temporary zoom offset
 
-          // Determine if this drag (left-click) will control zoom/forward
-          isZoomDraggingRef.current = (e.button === 0);
-        }
-      };
+    // Determine if this drag (left-click) will control zoom/forward
+    isZoomDraggingRef.current = (e.button === 0);
+  }
+};
 
       const handleMouseUp = (e) => {
-        if ((e.button === 0 || e.button === 2) && isDraggingRef.current) {
-          commonDragEndLogic(false); // Pass false for isTouchEvent
-        }
-      };
+  if ((e.button === 0 || e.button === 2) && isDraggingRef.current) {
+    const dx = Math.abs(e.clientX - dragStartRef.current.x);
+    const dy = Math.abs(e.clientY - dragStartRef.current.y);
+    const dragThreshold = 5; // Pixels: if moved less than this, it's considered a click, otherwise a drag
+
+    // If a pin was selected AND this mouseup concludes a drag (moved beyond threshold)
+    if (selectedId && (dx > dragThreshold || dy > dragThreshold)) {
+        // Deselect the pin because the user initiated a drag action.
+        // If it was a click on another pin, IconLayer's onClick would have already handled selection.
+        // If it was a click on empty space, DeckGL's onClick will handle deselection.
+        setSelectedId(null);
+        setSelectedPin(null);
+        if (hoverInfo) setHoverInfo(null);
+        // shouldStayAtPinPositionRef.current was already set to false in handleMouseDown
+    }
+    // If it was a click (not a drag):
+    // - Clicking another pin: IconLayer's onClick handles it.
+    // - Clicking empty space: DeckGL's global onClick handles it.
+    // So, no explicit deselection here for "clicks".
+
+    commonDragEndLogic(false); // Pass false for isTouchEvent (handles inertia, resets drag flags)
+  }
+};
 
       const handleTouchStart = (e) => {
-        if (e.touches.length === 1) {
-          e.preventDefault(); // Prevent default touch actions like scrolling
-          
-          // --- START: MODIFIED SECTION ---
-          const { latitude, longitude, zoom, pitch, bearing } = viewState; // CAPTURE current viewState
+  if (e.touches.length === 1) {
+    e.preventDefault(); // Prevent default touch actions like scrolling
+    
+    const { latitude, longitude, zoom, pitch, bearing } = viewState; // Capture current viewState
 
-          if (selectedId) { // Check if a pin is currently selected
-            setSelectedId(null);
-            setSelectedPin(null);
-            if (hoverInfo) setHoverInfo(null); // Clear hover if it's tied to selection
-          }
-          // --- END: MODIFIED SECTION ---
+    // Similar to handleMouseDown, if a pin is selected, unlock the camera
+    // for a potential drag. Actual deselection is deferred.
+    if (selectedId) {
+      shouldStayAtPinPositionRef.current = false;
+    }
+    // DO NOT call setSelectedId(null) or setSelectedPin(null) here.
 
-          const touch = e.touches[0];
-          isTouchDraggingRef.current = true;
-          setIsDragging(true); // For cursor style (might be less relevant for touch)
-          // touchStartRef.current = { x: touch.clientX, y: touch.clientY }; // Not used
-          touchPrevRef.current = { x: touch.clientX, y: touch.clientY };
-          // touchCountRef.current = e.touches.length; // Not used
+    const touch = e.touches[0];
+    isTouchDraggingRef.current = true;
+    setIsDragging(true); // For visual feedback if needed
+    touchStartRef.current = { x: touch.clientX, y: touch.clientY }; // Store touchstart position
+    touchPrevRef.current = { x: touch.clientX, y: touch.clientY };
+    // touchCountRef.current = e.touches.length; // Not actively used in the deselection logic path
 
-          leftDragVelocityRef.current = { bearing: 0, pitch: 0, latitude: 0, longitude: 0, zoom: 0 };
-          floatingVelocityRef.current = { x: 0, y: 0 };
-          
-          shouldStayAtPinPositionRef.current = false; // Allow camera to move freely
-          
-          // Initialize targets from the (potentially just unselected pin's) captured viewState
-          targetPositionRef.current = { latitude, longitude, zoom };
-          targetViewRef.current = { pitch, bearing };
-          baseZoomRef.current = zoom; // Use the captured zoom as the base
-          tempZoomOffsetRef.current = 0;
-          isZoomDraggingRef.current = true; // Touch drag always implies potential for zoom/forward
-        }
-      };
+    // Reset velocities and set targets
+    leftDragVelocityRef.current = { bearing: 0, pitch: 0, latitude: 0, longitude: 0, zoom: 0 };
+    floatingVelocityRef.current = { x: 0, y: 0 };
+    
+    targetPositionRef.current = { latitude, longitude, zoom };
+    targetViewRef.current = { pitch, bearing };
+    baseZoomRef.current = zoom;
+    tempZoomOffsetRef.current = 0;
+    isZoomDraggingRef.current = true; // Touch drag always implies potential for zoom/forward
+  }
+};
 
       const handleTouchEnd = (e) => {
-        if (isTouchDraggingRef.current && e.touches.length === 0) {
-          commonDragEndLogic(true); // Pass true for isTouchEvent
-        }
-      };
+  // Ensure we are reacting to the end of the touch that started the drag
+  // and that there are no more touches on the screen.
+  if (isTouchDraggingRef.current && e.changedTouches.length > 0 && e.touches.length === 0) {
+    const touch = e.changedTouches[0]; // Get info about the touch that was just lifted
+    const dx = Math.abs(touch.clientX - touchStartRef.current.x);
+    const dy = Math.abs(touch.clientY - touchStartRef.current.y);
+    const dragThreshold = 10; // Touch might need a slightly larger threshold for distinguishing tap vs drag
+
+    // If a pin was selected AND this touchend concludes a drag
+    if (selectedId && (dx > dragThreshold || dy > dragThreshold)) {
+        // Deselect the pin because the user initiated a drag.
+        setSelectedId(null);
+        setSelectedPin(null);
+        if (hoverInfo) setHoverInfo(null);
+        // shouldStayAtPinPositionRef.current was already set to false in handleTouchStart
+    }
+    // If it was a tap (not a drag):
+    // - Tapping another pin: IconLayer's onClick handles it.
+    // - Tapping empty space: DeckGL's global onClick handles it.
+
+    commonDragEndLogic(true); // Pass true for isTouchEvent
+  }
+};
       
       const handleMouseMoveForAmbient = (e) => { // Renamed to avoid conflict if main handleMouseMove is different
         if (ambientMovementEnabled && !isDraggingRef.current && !isTouchDraggingRef.current && !shouldStayAtPinPositionRef.current) {
@@ -780,10 +815,7 @@ function App() {
     // Note: Refs like targetPositionRef, isDraggingRef are mutated directly and don't need to be deps.
     }, [viewState, selectedId, hoverInfo, smoothnessSettings, ambientMovementEnabled, shouldStayAtPinPositionRef.current]); // Added hoverInfo
   
-// ... (all your existing code after this useEffect, including generateBoundaryCircle, layers, return statement, etc.) ...
-// Ensure that clampToRadius and clampVelocity are defined globally or passed correctly if they were outside.
-// The `handleDragMovement` and `commonDragEndLogic` functions from your original code are assumed to be correctly
-// defined and working with the refs and state as they were.
+
 // I've included simplified versions based on your latest provided code.
     useEffect(() => {
   const handleMouseMove = (e) => {
@@ -1185,11 +1217,14 @@ const handleTouchMove = (e) => {
         anchorY: 143
       }),
       sizeScale: 9,
-      getSize: d => (d.id === selectedId ? 15 : 8),
+      getSize: d => (d.id === selectedId ? 20 : 10),
       getColor: [255, 140, 0], 
 
       onClick: (info) => { // This handler is called only when a pickable object in this layer is clicked.
         if (info.object) {
+           isZoomDraggingRef.current = false;
+         tempZoomOffsetRef.current = 0;
+      
           const objectCoords = info.object.geometry.coordinates; 
           if (!objectCoords || objectCoords.length < 2) {
             console.error("Invalid coordinates for pin:", info.object);
@@ -1233,7 +1268,7 @@ const handleTouchMove = (e) => {
 
           const pinTargetZoom = 16;   // Desired zoom level for pin view
           const pinTargetPitch = 65;  // Desired pitch for pin view
-          const pinTargetBearing = 20; // Consistent bearing for a "centered" pin view
+          const pinTargetBearing = -20; // Consistent bearing for a "centered" pin view
 
           // Update target refs IMMEDIATELY. The smoothUpdate loop will use these
           // to maintain the view after the FlyToInterpolator finishes.
@@ -1280,12 +1315,13 @@ const handleTouchMove = (e) => {
             }            
           }));
         }
-        // The 'else' case from your original IconLayer onClick (where info.object is falsy)
-        // is generally not hit for a layer's specific onClick. Clicks on empty space
-        // are handled by DeckGL's top-level onClick, so that 'else' block is removed here.
-      }
+      },
+      onDrag: () => {
+    // Disable zoom behavior during pin drag
+    isZoomDraggingRef.current = false;
+    tempZoomOffsetRef.current = 0;
+  }
     })
-// ... continue with other layers or end of layers array ...
   ].filter(Boolean);
 
   return (
@@ -1345,16 +1381,13 @@ const handleTouchMove = (e) => {
             setHoverInfo(null); // Clears hover info, if any
             setSelectedId(null); // Clears the ID of the selected pin
             setSelectedPin(null); // Clears the selected pin data (which hides the tooltip)
-            shouldStayAtPinPositionRef.current = false; // Allows the camera to move freely again
-
-            // Optional: If you want the camera to fly back to an initial overview
-            // when clicking empty map space after a pin was selected, you could call:
-            // playInitialZoom(1000);
+            shouldStayAtPinPositionRef.current = false; 
           }
           // If info.object *is* present, it means a pickable layer item was clicked.
           // In that case, the IconLayer's own onClick handler (which selects the pin)
           // would have been triggered.
         }}
+        pickingRadius={30}
       >
         <Map
           mapboxAccessToken={MAPBOX_TOKEN}
@@ -1651,77 +1684,7 @@ const handleTouchMove = (e) => {
     onChange={(e) => setPitchSmoothness(parseFloat(e.target.value))}
   />
 </div>
-  {/* {smoothnessSettings.dynamicPitchEnabled && (
-    <>
-      <div style={{marginBottom: '6px'}}>
-        <label style={{display: 'block', marginBottom: '2px'}}>
-          Min Pitch (Zoomed Out): {smoothnessSettings.minPitchValue.toFixed(0)}°
-        </label>
-        <input
-          type="range"
-          min="0"
-          max="45"
-          step="1"
-          value={smoothnessSettings.minPitchValue}
-          onChange={(e) => setSmoothnessSettings(s => ({ 
-            ...s, 
-            minPitchValue: parseFloat(e.target.value) 
-          }))}
-        />
-      </div>
-      
-      <div style={{marginBottom: '6px'}}>
-        <label style={{display: 'block', marginBottom: '2px'}}>
-          Max Pitch (Zoomed In): {smoothnessSettings.maxPitchValue.toFixed(0)}°
-        </label>
-        <input
-          type="range"
-          min="30"
-          max="85"
-          step="1"
-          value={smoothnessSettings.maxPitchValue}
-          onChange={(e) => setSmoothnessSettings(s => ({ 
-            ...s, 
-            maxPitchValue: parseFloat(e.target.value) 
-          }))}
-        />
-      </div>
-      
-      <div style={{marginBottom: '6px'}}>
-        <label style={{display: 'block', marginBottom: '2px'}}>
-          Low Zoom Threshold: {smoothnessSettings.pitchZoomThresholdLow.toFixed(1)}
-        </label>
-        <input
-          type="range"
-          min="8"
-          max="16"
-          step="0.5"
-          value={smoothnessSettings.pitchZoomThresholdLow}
-          onChange={(e) => setSmoothnessSettings(s => ({ 
-            ...s, 
-            pitchZoomThresholdLow: parseFloat(e.target.value) 
-          }))}
-        />
-      </div>
-      
-      <div style={{marginBottom: '6px'}}>
-        <label style={{display: 'block', marginBottom: '2px'}}>
-          High Zoom Threshold: {smoothnessSettings.pitchZoomThresholdHigh.toFixed(1)}
-        </label>
-        <input
-          type="range"
-          min="13.5"
-          max="30"
-          step="0.5"
-          value={smoothnessSettings.pitchZoomThresholdHigh}
-          onChange={(e) => setSmoothnessSettings(s => ({ 
-            ...s, 
-            pitchZoomThresholdHigh: parseFloat(e.target.value) 
-          }))}
-        />
-      </div>
-    </>
-  )} */}
+  
 </div>
 
         {/* Reset Button */}
@@ -1771,27 +1734,74 @@ const handleTouchMove = (e) => {
         </button>
       </div>
       {/* Tooltip with original styling and positioning */}
-      {selectedPin && tooltipPos && (
-  <div
-    className="tooltip tooltip-visible tooltip-animate"
-    style={{
-      position: 'absolute',
-      left: tooltipPos.x,
-      top: tooltipPos.y,
-      zIndex: 1001
-    }}
-  >
-    <strong>{selectedPin.name}</strong>
-    <a href='#' target='_blank' rel="noopener noreferrer" style={{ color: '#fff', display: 'block' }}>Discover</a>
-  </div>
-)}
+            {selectedPin && tooltipPos && ( <div className="tooltip tooltip-center-screen tooltip-visible tooltip-animate"> <strong>{selectedPin.name}</strong> <a href='#' target='_blank' rel="noopener noreferrer" style={{ color: '#fff', display: 'block' }}>Discover</a> </div> )}
+
       
       <div className='live-back-btns'>
         <ul>
-          <li><a href="#" onClick={(e) => {
-            e.preventDefault();
-            playInitialZoom(1000);
-          }}><img src={mapRevertIcon} alt="Map" /></a></li>
+          <li>
+  <a 
+    href="#" 
+    onClick={(e) => {
+      e.preventDefault();
+      e.stopPropagation(); // Stop event bubbling
+      
+      // Force cleanup of all pin-related states
+      setSelectedId(null);
+      setSelectedPin(null);
+      setHoverInfo(null);
+      setTooltipPos(null);
+      
+      // Reset all camera-related refs
+      shouldStayAtPinPositionRef.current = false;
+      isDraggingRef.current = false;
+      isTouchDraggingRef.current = false;
+      
+      // Reset any ongoing momentum
+      leftDragVelocityRef.current = { bearing: 0, pitch: 0, latitude: 0, longitude: 0, zoom: 0 };
+      floatingVelocityRef.current = { x: 0, y: 0 };
+      
+      // Add touch-specific handling
+      if (isMobile) {
+        setIsDragging(false);
+        setIsPinTransition(false);
+      }
+      
+      playInitialZoom(1000);
+    }}
+    onTouchEnd={(e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      
+      // Same cleanup as onClick
+      setSelectedId(null);
+      setSelectedPin(null);
+      setHoverInfo(null);
+      setTooltipPos(null);
+      
+      shouldStayAtPinPositionRef.current = false;
+      isDraggingRef.current = false;
+      isTouchDraggingRef.current = false;
+      
+      leftDragVelocityRef.current = { bearing: 0, pitch: 0, latitude: 0, longitude: 0, zoom: 0 };
+      floatingVelocityRef.current = { x: 0, y: 0 };
+      
+      setIsDragging(false);
+      setIsPinTransition(false);
+      
+      playInitialZoom(1000);
+    }}
+  >
+    <img 
+      src={mapRevertIcon} 
+      alt="Map"
+      style={{
+        pointerEvents: 'none', // Prevent img from interfering with touch events
+        userSelect: 'none'
+      }} 
+    />
+  </a>
+</li>
           <li><a href="#" target='_blank'  rel="noopener noreferrer"><img src={liveTrackIcon} alt="Live Track" /></a></li>
         </ul>
       </div>
@@ -1805,34 +1815,13 @@ const handleTouchMove = (e) => {
         .smoothness-controls::-webkit-scrollbar-track { background: rgba(255,255,255,0.1); border-radius: 3px; }
         .smoothness-controls::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.3); border-radius: 3px; }
         .smoothness-controls::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.5); }
-        .tooltip {
-          background: rgba(0,0,0, 0.6);
-          padding: 15px 25px;
-          border-radius: 8px;
-          box-shadow: 0 6px 15px rgba(0, 0, 0, 0.3);
-          opacity: 0;
-          transition: opacity 0.3s ease-out, transform 0.3s ease-out;
-          z-index: 1001;
-          text-align: center;
-          color: white;
-        }
-        .tooltip strong { font-size: 28px; line-height: 32px; display: block; margin-bottom: 5px; }
-        .tooltip a { font-size: 16px; line-height: 20px; color: #eee; text-decoration: underline; }
-        .tooltip-visible { opacity: 1; transform: translate(-50%, -120%) scale(1); }
-        .tooltip-animate { animation: fadeInUpTooltip 0.3s ease-out; }
-        @keyframes fadeInUpTooltip {
-          0% { opacity: 0; transform: translate(-50%, -110%) scale(0.95); }
-          100% { opacity: 1; transform: translate(-50%, -120%) scale(1); }
-        }
-        @media only screen and (max-width: 992px) {
-          .tooltip strong { font-size: 22px; line-height: 26px; }
-          .tooltip a { font-size: 14px; line-height: 18px; }
-          .tooltip { padding: 10px 15px; }
-        }
-        @media only screen and (max-width: 767px) {
-          .tooltip strong { font-size: 18px; line-height: 22px; }
-          .tooltip a { font-size: 12px; line-height: 16px; }
-        }
+        .tooltip { background: rgba(0,0,0, 0.3); padding: 25px 35px; border-radius: 12px; box-shadow: 0 8px 25px rgba(0, 0, 0, 0.4); opacity: 0; transition: opacity 0.3s ease-out, transform 0.3s ease-out; z-index: 1001; text-align: center; color: white; }
+        .tooltip-center-screen { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%) scale(0.95); width: 70vw; min-height: 150px; display: flex; flex-direction: column; justify-content: center; align-items: center; }
+        .tooltip strong { font-size: 72px; line-height: 78px; display: block; margin-bottom: 15px; } .tooltip a { font-size: 18px; line-height: 22px; color: gold; text-decoration: none; padding: 8px 15px; border: 0.5px solid gold; border-radius: 5px; transition: background-color 0.2s, color 0.2s; } .tooltip a:hover { background-color: gold; color: black; }
+        .tooltip-visible { opacity: 1; } .tooltip-animate { animation: fadeInUpTooltipCentered 0.4s ease-out forwards; }
+        @keyframes fadeInUpTooltipCentered { 0% { opacity: 0; transform: translate(-50%, -45%) scale(0.95); } 100% { opacity: 1; transform: translate(-50%, -50%) scale(1); } }
+        @media only screen and (max-width: 992px) { .tooltip-center-screen { width: 70vw; padding: 20px; } .tooltip strong { font-size: 46px; line-height: 60px; margin-bottom: 10px;} .tooltip a { font-size: 16px; line-height: 20px; } }
+        @media only screen and (max-width: 767px) { .tooltip-center-screen { width: 80vw; max-width: 280px; padding: 15px; } .tooltip strong { font-size: 32px; line-height: 46px; margin-bottom: 8px;} .tooltip a { font-size: 14px; line-height: 18px; } }
       `}</style>
     </div>
   );
