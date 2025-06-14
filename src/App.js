@@ -215,9 +215,7 @@ function App() {
       const finalDuration = duration ?? 5000;
       setSelectedId(null);
       setHoverInfo(null);
-      
-      // --- FIX: Treat this as a transition to temporarily pause the smoothUpdate loop ---
-      
+      setSelectedPin(null);      
 
       shouldStayAtPinPositionRef.current = false;
   
@@ -1543,7 +1541,7 @@ function App() {
                 wheelModeProgressRef.current = 0;
                 wheelModeTargetProgressRef.current = 0;
 
-                // --- FIX: Call the animation function immediately, without a timeout ---
+                setIsPinTransition(true); 
                 playInitialZoom(1500);
               }}
               onTouchEnd={(e) => {
