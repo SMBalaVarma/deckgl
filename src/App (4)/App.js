@@ -210,47 +210,56 @@ function App() {
   };
 
   // Update in the playInitialZoom function
-    // Update in the playInitialZoom function
   const playInitialZoom = (duration) => {
-      const finalDuration = duration ?? 5000;
-      setSelectedId(null);
-      setHoverInfo(null);
-      setSelectedPin(null);      
+    const finalDuration = duration ?? 5000;
+    
+    // Clear any selected pin info
+    setSelectedId(null);
 
-      shouldStayAtPinPositionRef.current = false;
-  
-      // Set initial zoom to the smooth drag zoom level
-      baseZoomRef.current = SMOOTH_DRAG_ZOOM_LEVEL;
-      tempZoomOffsetRef.current = 0;
-      isZoomDraggingRef.current = false;
-      setIsAtSmoothDragZoom(true);
-  
-      targetPositionRef.current = {
-        latitude: CENTER_POINT.latitude,
-        longitude: CENTER_POINT.longitude,
-        zoom: SMOOTH_DRAG_ZOOM_LEVEL
-      };
-      targetViewRef.current = {
-        pitch: 60,
-        bearing: INITIAL_VIEW_STATE.bearing
-      };
-      leftDragVelocityRef.current = { bearing: 0, pitch: 0, latitude: 0, longitude: 0, zoom: 0 };
-      floatingVelocityRef.current = { x: 0, y: 0 };
-  
-      setViewState(prev => ({
-        ...prev,
-        longitude: CENTER_POINT.longitude,
-        latitude: CENTER_POINT.latitude,
-        zoom: SMOOTH_DRAG_ZOOM_LEVEL,
-        pitch: 60,
-        bearing: -20,
-        transitionDuration: finalDuration,
-        transitionInterpolator: new FlyToInterpolator(),
-        onTransitionEnd: () => {
-          setIsPinTransition(false); 
-        }
-      }));
+    setHoverInfo(null);
+
+    setSelectedPin(null);
+
+    // FIX 1: Set a transition flag to TRUE before the animation starts.
+    // This will tell our custom animation loop to pause.
+    setIsPinTransition(true);
+    shouldStayAtPinPositionRef.current = false;
+
+    // Set the target camera state for after the animation
+    baseZoomRef.current = SMOOTH_DRAG_ZOOM_LEVEL;
+    tempZoomOffsetRef.current = 0;
+    isZoomDraggingRef.current = false;
+
+    setIsAtSmoothDragZoom(true);
+
+    targetPositionRef.current = {
+      latitude: CENTER_POINT.latitude,
+      longitude: CENTER_POINT.longitude,
+      zoom: SMOOTH_DRAG_ZOOM_LEVEL
     };
+    targetViewRef.current = {
+      pitch: 60, // The desired final pitch
+      bearing: -20
+    };
+    leftDragVelocityRef.current = { bearing: 0, pitch: 0, latitude: 0, longitude: 0, zoom: 0 };
+    floatingVelocityRef.current = { x: 0, y: 0 };
+
+    // Start the Deck.gl transition
+    setViewState(prev => ({
+      ...prev,
+      longitude: CENTER_POINT.longitude,
+      latitude: CENTER_POINT.latitude,
+      zoom: SMOOTH_DRAG_ZOOM_LEVEL,
+      pitch: 60, // Explicitly set the target pitch here
+      bearing: -20,
+      transitionDuration: finalDuration,
+      transitionInterpolator: new FlyToInterpolator(),
+      // FIX 2: Add a callback to set the transition flag to FALSE when done.
+      onTransitionEnd: () => {
+        setIsPinTransition(false); // Resume our custom animation loop
+      }
+    }));
+  };
 
   useEffect(() => {
     const handleWheel = (e) => {
@@ -339,18 +348,6 @@ function App() {
       setViewState(prev => {
         if (isPinTransition) {
           return prev;
-        }
-
-        if (shouldStayAtPinPositionRef.current) {
-          return {
-            ...prev,
-            pitch: targetViewRef.current.pitch, // e.g., 60
-            bearing: targetViewRef.current.bearing,
-            latitude: targetPositionRef.current.latitude,
-            longitude: targetPositionRef.current.longitude,
-            zoom: targetPositionRef.current.zoom,
-            transitionDuration: 0
-          };
         }
 
         if (isInWheelMode) {
@@ -469,7 +466,8 @@ function App() {
             };
             targetViewRef.current = { pitch: newPitch, bearing: newBearing };
             targetPositionRef.current = { latitude: newLatitude, longitude: newLongitude, zoom: newZoom };
-            } else if (ambientMovementEnabled && !isPinTransition && !shouldStayAtPinPositionRef.current) {            const basePitch = targetViewRef.current.pitch;
+          } else if (ambientMovementEnabled && !isPinTransition) {
+            const basePitch = targetViewRef.current.pitch;
             const baseBearing = targetViewRef.current.bearing;
             const baseLatitude = targetPositionRef.current.latitude;
             const baseLongitude = targetPositionRef.current.longitude;
@@ -570,7 +568,6 @@ function App() {
     return () => cancelAnimationFrame(animationFrameRef.current);
   }, [smoothnessSettings, ambientMovementEnabled, isInWheelMode, isPinTransition]);
 
-  
   // CLEANUP: This is the single, consolidated useEffect for all event handling.
   // The other two similar useEffect blocks have been removed.
   useEffect(() => {
@@ -677,7 +674,8 @@ function App() {
 
       if (isTouchEvent) {
         isTouchDraggingRef.current = false;
-      } else {
+      }
+       else {
         isDraggingRef.current = false;
       }
       setIsDragging(false);
@@ -689,9 +687,8 @@ function App() {
       if (isAnimationLockedRef.current) {
         return;
       }
-      // if (isInWheelMode) return;
+      if (isInWheelMode) return;
       if (e.button === 0 || e.button === 2) {
-        
         const { latitude, longitude, zoom, pitch, bearing } = viewState;
 
         if (selectedId) {
@@ -767,7 +764,7 @@ function App() {
       }
       
       if (e.touches.length === 1) {
-        // if (isInWheelMode) return;
+        if (isInWheelMode) return;
         e.preventDefault();
         
         const { latitude, longitude, zoom, pitch, bearing } = viewState;
@@ -968,14 +965,13 @@ function App() {
         if (info.object) {
           isAnimationLockedRef.current = true; // Lock interactions
 
+          setIsPinTransition(true);
           setIsInWheelMode(false);
           wheelModeProgressRef.current = 0;
           wheelModeTargetProgressRef.current = 0;
-          
           isZoomDraggingRef.current = false;
           tempZoomOffsetRef.current = 0;
-          
-          setIsPinTransition(true);
+
           const objectCoords = info.object.geometry.coordinates;
           if (!objectCoords || objectCoords.length < 2) {
             console.error("Invalid coordinates for pin:", info.object);
@@ -1051,6 +1047,7 @@ function App() {
               loadingTimeoutRef.current = setTimeout(() => {
                 setIsLoading(false);
                 setIsPinTransition(false);
+                // FIX: Unlock interactions now that the animation is complete.
                 isAnimationLockedRef.current = false;
               }, 500);
             }
@@ -1103,23 +1100,24 @@ function App() {
           clearColor: [0.05, 0.05, 0.05, 1.0]
         }}
         onViewStateChange={({ viewState: newDeckViewState, interactionState }) => {
-            setViewState(newDeckViewState);
-            if (isPinTransition) {
-                return; 
-            }
 
-            // Only update targets from user interaction when the view is stable.
-            if (!interactionState.inTransition && !isDraggingRef.current) {
-                targetPositionRef.current = {
-                    latitude: newDeckViewState.latitude,
-                    longitude: newDeckViewState.longitude,
-                    zoom: newDeckViewState.zoom
-                };
-                targetViewRef.current = {
-                    pitch: newDeckViewState.pitch,
-                    bearing: newDeckViewState.bearing,
-                };
-            }
+          setViewState(newDeckViewState);
+          if (!interactionState.inTransition && !isDraggingRef.current) {
+            setViewState(newDeckViewState);
+            targetPositionRef.current = {
+              latitude: newDeckViewState.latitude,
+              longitude: newDeckViewState.longitude,
+              zoom: newDeckViewState.zoom
+            };
+
+            targetViewRef.current = {
+              pitch: newDeckViewState.pitch,
+              bearing: newDeckViewState.bearing,
+            };
+
+          } else if (interactionState.inTransition) {
+            setViewState(newDeckViewState);
+          }
         }}
 
         onClick={info => {
@@ -1537,33 +1535,33 @@ function App() {
       
       <div className='live-back-btns'>
         <ul>
-                    <li>
+          <li>
             <a
-              href="#" style={{ display: 'block', width: '50px', height: '50px'}}
+              href="#"
               // The onClick handler for desktop/mouse users
               onClick={(e) => {
                 e.preventDefault();
                 e.stopPropagation();
 
-                // Set wheel mode to false to ensure logic is correct on the next frame
+                // --- FIX: Force exit from the wheel/pinch zoom animation mode ---
                 setIsInWheelMode(false);
                 wheelModeProgressRef.current = 0;
                 wheelModeTargetProgressRef.current = 0;
+                // --- END FIX ---
 
-                setIsPinTransition(true); 
                 playInitialZoom(1500);
-              }}
-              onTouchEnd={(e) => {
-                e.preventDefault();
-                e.stopPropagation();
+                }}
+                onTouchEnd={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
 
-                // Same fix for touch events
-                setIsInWheelMode(false);
-                wheelModeProgressRef.current = 0;
-                wheelModeTargetProgressRef.current = 0;
-                setIsPinTransition(true); 
-                playInitialZoom(1500);
-              }}
+                  // Identical logic for touch
+                  setIsInWheelMode(false);
+                  wheelModeProgressRef.current = 0;
+                  wheelModeTargetProgressRef.current = 0;
+                  
+                  playInitialZoom(1500);
+                }}
             >
               <img
                 src={mapRevertIcon}
