@@ -152,17 +152,32 @@ function App() {
     minZoom: 11,
     maxZoom: 16,
 
-    // Enhanced ambient settings
-    ambientStrength: 0.02,
-    ambientMaxPitch: 0.01,
+    // // Enhanced ambient settings
+    // ambientStrength: 0.1,
 
-    ambientMaxBearing: 0.02,
-    ambientSmoothness: 0.98,
+    // ambientMaxPitch: 0.0001,
+    // ambientMaxBearing: 0.0002,
 
-    ambientMaxLatOffset: 0.0002,
-    ambientMaxLngOffset: 0.0002,
+    // ambientSmoothness: 0.92,
+
+    // ambientMaxLatOffset: 0.00002,
+    // ambientMaxLngOffset: 0.00002,
 
     
+    ambientStrength: 0.5,
+    ambientMaxPitch: 1.5,      // Increased: Makes reaction faster
+    ambientMaxBearing: 2.5,    // Increased: Makes reaction faster
+    ambientSmoothness: 0.92,
+    
+    // NEW: These control the LIMIT or maximum travel distance
+    ambientMaxPitchOffset: 0.0005,  // The pitch can't move more than 5 degrees from its anchor
+    ambientMaxBearingOffset: 0.0010, // The bearing can't move more than 10 degrees from its anchor
+
+    // ... other settings for panning etc.
+    ambientMaxLatOffset: 0.0001,
+    ambientMaxLngOffset: 0.0001,
+
+    // Dynamic forward speed settings
     forwardSpeedMinZoom: 13.5, // The zoom level where speed is at its minimum
     forwardSpeedMaxZoom: 16, // The zoom level where speed is at its maximum
     forwardSpeedAtMinZoom: isMobile ? 0.01 : 0.012, // The slower speed when zoomed out
@@ -519,32 +534,58 @@ useEffect(() => {
             baseZoom = targetPositionRef.current.zoom;
           }
 
-          // Step 2: Apply AMBIENT movement as an offset to the BASE target
           if (ambientMovementEnabled) {
             const mouseInfluenceX = mouseInfluenceRef.current.x + mouseVelocityRef.current.x * smoothnessSettings.mouseVelocityInfluence;
             const mouseInfluenceY = mouseInfluenceRef.current.y + mouseVelocityRef.current.y * smoothnessSettings.mouseVelocityInfluence;
+
+            // These still calculate the "force" or SPEED of the mouse input
             const pitchInfluence = mouseInfluenceY * smoothnessSettings.ambientMaxPitch;
             const bearingInfluence = mouseInfluenceX * smoothnessSettings.ambientMaxBearing;
-            const latInfluence = mouseInfluenceY * smoothnessSettings.ambientMaxLatOffset;
-            const lngInfluence = mouseInfluenceX * smoothnessSettings.ambientMaxLngOffset;
             
+            // Build up floating velocity (for the drifting inertia effect)
             floatingVelocityRef.current.x += mouseInfluenceX * smoothnessSettings.floatingStrength;
             floatingVelocityRef.current.y += mouseInfluenceY * smoothnessSettings.floatingStrength;
+            
+            // Clamp the floating velocity so it doesn't build up forever
             floatingVelocityRef.current.x = clampVelocity(floatingVelocityRef.current.x, smoothnessSettings.floatingMaxInfluence);
             floatingVelocityRef.current.y = clampVelocity(floatingVelocityRef.current.y, smoothnessSettings.floatingMaxInfluence);
             
-            const ambientTargetPitch = Math.max(0, Math.min(85, basePitch + pitchInfluence + floatingVelocityRef.current.y));
-            const ambientTargetBearing = baseBearing + bearingInfluence + floatingVelocityRef.current.x;
-            let ambientTargetLatitude = baseLatitude + latInfluence + floatingVelocityRef.current.y * 0.001;
-            let ambientTargetLongitude = baseLongitude + lngInfluence + floatingVelocityRef.current.x * 0.001;
+            // --- START OF NEW LOGIC ---
+
+            // 1. Calculate the TOTAL desired offset from both direct mouse position and the drifting inertia.
+            // This is how far the camera *wants* to move.
+            let totalPitchOffset = pitchInfluence + floatingVelocityRef.current.y;
+            let totalBearingOffset = bearingInfluence + floatingVelocityRef.current.x;
+
+            // 2. NEW: Enforce the hard LIMIT ("leash") on the total offset.
+            // This is the key change. No matter how fast or far the mouse moves, the camera's
+            // final offset from its resting point can't exceed these values.
+            totalPitchOffset = clampVelocity(totalPitchOffset, smoothnessSettings.ambientMaxPitchOffset);
+            totalBearingOffset = clampVelocity(totalBearingOffset, smoothnessSettings.ambientMaxBearingOffset);
+            
+            // 3. Apply the now-LIMITED offset to the base (resting) camera position.
+            const ambientTargetPitch = Math.max(0, Math.min(85, basePitch + totalPitchOffset));
+            const ambientTargetBearing = baseBearing + totalBearingOffset;
+            
+            // --- END OF NEW LOGIC ---
+
+            // Panning logic for Latitude/Longitude remains the same.
+            // This multiplier controls how far the map pans left/right/up/down.
+            const panSpeedMultiplier = 0.0009; // Your provided value
+            const latInfluence = mouseInfluenceY * smoothnessSettings.ambientMaxLatOffset;
+            const lngInfluence = mouseInfluenceX * smoothnessSettings.ambientMaxLngOffset;
+            let ambientTargetLatitude = baseLatitude + latInfluence + floatingVelocityRef.current.y * panSpeedMultiplier;
+            let ambientTargetLongitude = baseLongitude + lngInfluence + floatingVelocityRef.current.x * panSpeedMultiplier;
             
             const clamped = clampToRadius(ambientTargetLatitude, ambientTargetLongitude);
             ambientTargetLatitude = clamped.latitude;
             ambientTargetLongitude = clamped.longitude;
 
+            // Apply damping to the floating velocity for the next frame
             floatingVelocityRef.current.x *= smoothnessSettings.floatingDamping;
             floatingVelocityRef.current.y *= smoothnessSettings.floatingDamping;
 
+            // Smoothly interpolate the camera towards its new target positions
             const smoothFactor = 1 - smoothnessSettings.ambientSmoothness;
             newPitch = currentPitch + (ambientTargetPitch - currentPitch) * smoothFactor;
             newBearing = currentBearing + (ambientTargetBearing - currentBearing) * smoothFactor;
@@ -553,7 +594,7 @@ useEffect(() => {
             
             // Zoom stays at the base level
             newZoom = currentZoom + (baseZoom - currentZoom) * smoothFactor;
-          } else {
+          }else {
             // If ambient is disabled, just smoothly move to the base position
             const smoothFactor = smoothnessSettings.leftSmoothFactor;
             newPitch = currentPitch + (basePitch - currentPitch) * smoothFactor;
