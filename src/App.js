@@ -468,11 +468,11 @@ useEffect(() => {
 
         // Check if inertia is active
         const hasInertia = (
-          Math.abs(leftDragVelocityRef.current.bearing) > 0.001 ||
-          Math.abs(leftDragVelocityRef.current.pitch) > 0.001 ||
-          Math.abs(leftDragVelocityRef.current.latitude) > 0.0001 ||
-          Math.abs(leftDragVelocityRef.current.longitude) > 0.0001 ||
-          Math.abs(leftDragVelocityRef.current.zoom) > 0.001
+          Math.abs(leftDragVelocityRef.current.bearing) > 0.01 ||
+          Math.abs(leftDragVelocityRef.current.pitch) > 0.01 ||
+          Math.abs(leftDragVelocityRef.current.latitude) > 0.001 ||
+          Math.abs(leftDragVelocityRef.current.longitude) > 0.001 ||
+          Math.abs(leftDragVelocityRef.current.zoom) > 0.01
         );
 
         // Update inertia state
@@ -487,7 +487,7 @@ useEffect(() => {
           leftDragVelocityRef.current = { bearing: 0, pitch: 0, latitude: 0, longitude: 0, zoom: 0 };
         
         } else if (hasInertia) {
-          // INERTIA IS ACTIVE - Apply velocity and damping
+          // Apply velocity and get new positions
           baseBearing = currentBearing + leftDragVelocityRef.current.bearing;
           basePitch = currentPitch + leftDragVelocityRef.current.pitch;
           let tempLat = currentLatitude + leftDragVelocityRef.current.latitude;
@@ -496,23 +496,40 @@ useEffect(() => {
           const clamped = clampToRadius(tempLat, tempLng);
           baseLatitude = clamped.latitude;
           baseLongitude = clamped.longitude;
+          
           if (clamped.isAtBoundary) {
-            const bounceFactor = smoothnessSettings.boundaryBounceFactor || 0.6;
+  // More controlled bounce with velocity reduction
+            const bounceFactor = 0.3; // Reduced from 0.6
             leftDragVelocityRef.current.latitude *= -bounceFactor;
             leftDragVelocityRef.current.longitude *= -bounceFactor;
-            leftDragVelocityRef.current.bearing *= 0.9;
-            leftDragVelocityRef.current.pitch *= 0.9;
+            
+            // Apply additional damping to all velocities on boundary hit
+            leftDragVelocityRef.current.bearing *= 0.7;
+            leftDragVelocityRef.current.pitch *= 0.7;
+            leftDragVelocityRef.current.zoom *= 0.8;
           }
+
           baseZoom = currentZoom + leftDragVelocityRef.current.zoom;
 
+          // CRITICAL FIX: Update target references during inertia
+          targetPositionRef.current = {
+            latitude: baseLatitude,
+            longitude: baseLongitude,
+            zoom: baseZoom
+          };
+          targetViewRef.current = {
+            pitch: basePitch,
+            bearing: baseBearing
+          };
+          baseZoomRef.current = baseZoom;
+
           // Apply damping
-          const decay = 0.95;
+          const decay = 0.97;
           leftDragVelocityRef.current.bearing *= decay;
           leftDragVelocityRef.current.pitch *= decay;
           leftDragVelocityRef.current.latitude *= decay;
           leftDragVelocityRef.current.longitude *= decay;
-          leftDragVelocityRef.current.zoom *= ( 0.95);
-          
+          leftDragVelocityRef.current.zoom *= 0.97;
         } else {
           // NO INERTIA - Camera is idle
           baseLatitude = targetPositionRef.current.latitude;
@@ -1169,19 +1186,24 @@ const commonDragEndLogic = (isTouchEvent = false) => {
     return; 
   }
   
-  // ENHANCED FIX: Always keep references in sync when not actively manipulating
-  if (!interactionState.inTransition && !isDraggingRef.current && !isTouchDraggingRef.current && !isInWheelMode) {
-    targetPositionRef.current = {
-      latitude: newDeckViewState.latitude,
-      longitude: newDeckViewState.longitude,
-      zoom: newDeckViewState.zoom
-    };
-    targetViewRef.current = {
-      pitch: newDeckViewState.pitch,
-      bearing: newDeckViewState.bearing,
-    };
-    baseZoomRef.current = newDeckViewState.zoom;
-  }
+  // FIXED CODE
+if (!interactionState.inTransition && 
+    !isDraggingRef.current && 
+    !isTouchDraggingRef.current && 
+    !isInWheelMode && 
+    !isInertiaActiveRef.current) { // Add this check
+  targetPositionRef.current = {
+    latitude: newDeckViewState.latitude,
+    longitude: newDeckViewState.longitude,
+    zoom: newDeckViewState.zoom
+  };
+  targetViewRef.current = {
+    pitch: newDeckViewState.pitch,
+    bearing: newDeckViewState.bearing,
+  };
+  baseZoomRef.current = newDeckViewState.zoom;
+}
+
   
   // ADDITIONAL FIX: Update during wheel mode to prevent position drift
   if (isInWheelMode && !isDraggingRef.current && !isTouchDraggingRef.current) {
