@@ -506,12 +506,12 @@ useEffect(() => {
           baseZoom = currentZoom + leftDragVelocityRef.current.zoom;
 
           // Apply damping
-          const decay = 0.985;
+          const decay = 0.97;
           leftDragVelocityRef.current.bearing *= decay;
           leftDragVelocityRef.current.pitch *= decay;
           leftDragVelocityRef.current.latitude *= decay;
           leftDragVelocityRef.current.longitude *= decay;
-          leftDragVelocityRef.current.zoom *= ( 0.985);
+          leftDragVelocityRef.current.zoom *= ( 0.97);
           
         } else {
           // NO INERTIA - Camera is idle
