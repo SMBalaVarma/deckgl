@@ -107,8 +107,6 @@ function App() {
   const tempZoomOffsetRef = useRef(0);
   const isZoomDraggingRef = useRef(false);
 
-  const isInertiaActiveRef = useRef(false);
-
   const canvasRef = useRef(); 
 
   const wrapperRef = useRef();
@@ -138,8 +136,8 @@ function App() {
     leftDampingFactor: isMobile ? 0.90 : 0.95,
     leftDragBearingSensitivity: isMobile ? 0.15 : 0.10,
 
-    leftSmoothFactor: 0.15,
-    dragLerpFactor: 0.15,
+    leftSmoothFactor: 0.08,
+    dragLerpFactor: 0.08,
 
     // Enhanced zoom settings - Much smaller values for floating effect
     verticalZoomSensitivity: 0.001,
@@ -390,208 +388,191 @@ useEffect(() => {
     }
   }, [selectedPin, viewState]);
 
-  useEffect(() => {
-  const smoothUpdate = () => {
-    // Don't run expensive animations if the tab is not visible
-    if (document.hidden) {
-      animationFrameRef.current = requestAnimationFrame(smoothUpdate);
-      return;
-    }
-
-    setViewState(prev => {
-      // While flying to a pin, let Deck.gl handle the transition smoothly.
-      if (isPinTransition) {
-        return prev;
+useEffect(() => {
+    const smoothUpdate = () => {
+      // Don't run expensive animations if the tab is not visible
+      if (document.hidden) {
+        animationFrameRef.current = requestAnimationFrame(smoothUpdate);
+        return;
       }
 
-      // Handle the dedicated "wheel mode" for zooming out.
-      if (isInWheelMode) {
-        const progressDiff = wheelModeTargetProgressRef.current - wheelModeProgressRef.current;
-        wheelModeProgressRef.current += progressDiff * 0.08;
-
-        const START_ZOOM = 16;
-        const END_ZOOM = isMobile ? 13.5 : 13.5;
-        const START_PITCH = 60;
-        const END_PITCH = 0;
-
-        const lerp = (a, b, t) => a * (1 - t) + b * t;
-        const newZoom = lerp(START_ZOOM, END_ZOOM, wheelModeProgressRef.current);
-        const newPitch = lerp(START_PITCH, END_PITCH, wheelModeProgressRef.current);
-        
-        if (wheelModeProgressRef.current < 0.01 && wheelModeTargetProgressRef.current === 0) {
-          setIsInWheelMode(false);
-          baseZoomRef.current = prev.zoom;
+      setViewState(prev => {
+        // While flying to a pin, let Deck.gl handle the transition smoothly.
+        if (isPinTransition) {
+          return prev;
         }
+
+        // Handle the dedicated "wheel mode" for zooming out.
+        if (isInWheelMode) {
+            const progressDiff = wheelModeTargetProgressRef.current - wheelModeProgressRef.current;
+            wheelModeProgressRef.current += progressDiff * 0.08; // Smoothing factor for wheel zoom
+
+            const START_ZOOM = 16;
+            const END_ZOOM = isMobile ? 13.5 : 13.5;
+            const START_PITCH = 60;
+            const END_PITCH = 0;
+
+            const lerp = (a, b, t) => a * (1 - t) + b * t;
+            const newZoom = lerp(START_ZOOM, END_ZOOM, wheelModeProgressRef.current);
+            const newPitch = lerp(START_PITCH, END_PITCH, wheelModeProgressRef.current);
+            
+            // If we've scrolled all the way back in, exit wheel mode.
+            if (wheelModeProgressRef.current < 0.01 && wheelModeTargetProgressRef.current === 0) {
+              setIsInWheelMode(false);
+              baseZoomRef.current = prev.zoom;
+            }
+
+            return {
+              ...prev,
+              zoom: newZoom,
+              pitch: newPitch,
+              transitionDuration: 0,
+            };
+        }
+        
+        // Get current camera values
+        const {
+          pitch: currentPitch,
+          bearing: currentBearing,
+          latitude: currentLatitude,
+          longitude: currentLongitude,
+          zoom: currentZoom
+        } = prev;
+
+        // Store the previous state to calculate velocity on drag end
+        prevViewStateRef.current = { ...prev };
+
+        let newPitch = currentPitch;
+        let newBearing = currentBearing;
+        let newLatitude = currentLatitude;
+        let newLongitude = currentLongitude;
+        let newZoom = currentZoom;
+        
+        // --- ACTIVE DRAGGING LOGIC ---
+        // This runs ONLY when the mouse button is down and moving.
+        if (isDraggingRef.current || isTouchDraggingRef.current) {
+          shouldStayAtPinPositionRef.current = false;
+          
+          // Smoothly interpolate towards the target values set by the drag handlers
+          newPitch = smoothInterpolate(currentPitch, targetViewRef.current.pitch, smoothnessSettings.dragLerpFactor);
+          newBearing = smoothInterpolate(currentBearing, targetViewRef.current.bearing, smoothnessSettings.dragLerpFactor);
+          newLatitude = smoothInterpolate(currentLatitude, targetPositionRef.current.latitude, smoothnessSettings.dragLerpFactor);
+          newLongitude = smoothInterpolate(currentLongitude, targetPositionRef.current.longitude, smoothnessSettings.dragLerpFactor);
+          newZoom = smoothInterpolate(currentZoom, baseZoomRef.current + tempZoomOffsetRef.current, smoothnessSettings.dragLerpFactor);
+
+          // Clamp position to the boundary
+          const clamped = clampToRadius(newLatitude, newLongitude);
+          newLatitude = clamped.latitude;
+          newLongitude = clamped.longitude;
+
+        } else {
+          
+          let baseLatitude, baseLongitude, basePitch, baseBearing, baseZoom;
+
+          // Determine the camera's "resting" or "target" state for this frame
+          if (shouldStayAtPinPositionRef.current) {
+            // If we are locked to a pin, the target is the pin's location.
+            baseLatitude = targetPositionRef.current.latitude;
+            baseLongitude = targetPositionRef.current.longitude;
+            basePitch = targetViewRef.current.pitch;
+            baseBearing = targetViewRef.current.bearing;
+            baseZoom = targetPositionRef.current.zoom;
+            // Kill any leftover velocity to prevent drifting away from the pin.
+            leftDragVelocityRef.current = { bearing: 0, pitch: 0, latitude: 0, longitude: 0, zoom: 0 };
+          
+          } else if (
+            // If there's leftover velocity from a drag (inertia), let the map coast.
+            Math.abs(leftDragVelocityRef.current.bearing) > smoothnessSettings.stopThreshold ||
+            Math.abs(leftDragVelocityRef.current.pitch) > smoothnessSettings.stopThreshold ||
+            Math.abs(leftDragVelocityRef.current.latitude) > smoothnessSettings.stopThreshold ||
+            Math.abs(leftDragVelocityRef.current.longitude) > smoothnessSettings.stopThreshold ||
+            Math.abs(leftDragVelocityRef.current.zoom) > 0.001
+          ) {
+            // Apply the velocity to the current position to get the next frame's target
+            baseBearing = currentBearing + leftDragVelocityRef.current.bearing;
+            basePitch = currentPitch + leftDragVelocityRef.current.pitch;
+            let tempLat = currentLatitude + leftDragVelocityRef.current.latitude;
+            let tempLng = currentLongitude + leftDragVelocityRef.current.longitude;
+            
+            // Check for boundary collision during inertia
+            const clamped = clampToRadius(tempLat, tempLng);
+            baseLatitude = clamped.latitude;
+            baseLongitude = clamped.longitude;
+            if (clamped.isAtBoundary) {
+              // Bounce effect
+              leftDragVelocityRef.current.latitude =0;
+              leftDragVelocityRef.current.longitude =0;
+            }
+            baseZoom = currentZoom + leftDragVelocityRef.current.zoom;
+
+            // Dampen the velocity for the next frame to create the slowdown effect
+            leftDragVelocityRef.current.bearing *= smoothnessSettings.leftDampingFactor;
+            leftDragVelocityRef.current.pitch *= smoothnessSettings.leftDampingFactor;
+            leftDragVelocityRef.current.latitude *= smoothnessSettings.leftDampingFactor;
+            leftDragVelocityRef.current.longitude *= smoothnessSettings.leftDampingFactor;
+            leftDragVelocityRef.current.zoom *= smoothnessSettings.zoomDamping;
+
+          } else {
+            // If no inertia and not at a pin, the camera is idle. Its target is its last known position.
+            baseLatitude = targetPositionRef.current.latitude;
+            baseLongitude = targetPositionRef.current.longitude;
+            basePitch = targetViewRef.current.pitch;
+            baseBearing = targetViewRef.current.bearing;
+            baseZoom = targetPositionRef.current.zoom;
+          }
+
+          // Now, apply ambient effects on top of the calculated base position
+          if (ambientMovementEnabled) {
+              const mouseInfluenceX = mouseInfluenceRef.current.x;
+              const mouseInfluenceY = mouseInfluenceRef.current.y;
+
+              const pitchInfluence = mouseInfluenceY * smoothnessSettings.ambientMaxPitchOffset;
+              const bearingInfluence = mouseInfluenceX * smoothnessSettings.ambientMaxBearingOffset;
+
+              const ambientTargetPitch = basePitch + pitchInfluence;
+              const ambientTargetBearing = baseBearing + bearingInfluence;
+              const ambientTargetLatitude = baseLatitude + (mouseInfluenceY * smoothnessSettings.ambientMaxLatOffset);
+              const ambientTargetLongitude = baseLongitude + (mouseInfluenceX * smoothnessSettings.ambientMaxLngOffset);
+              
+              const smoothFactor = 1 - smoothnessSettings.ambientSmoothness;
+              newPitch = smoothInterpolate(currentPitch, ambientTargetPitch, smoothFactor);
+              newBearing = smoothInterpolate(currentBearing, ambientTargetBearing, smoothFactor);
+              newLatitude = smoothInterpolate(currentLatitude, ambientTargetLatitude, smoothFactor);
+              newLongitude = smoothInterpolate(currentLongitude, ambientTargetLongitude, smoothFactor);
+              newZoom = smoothInterpolate(currentZoom, baseZoom, smoothFactor);
+
+          } else {
+            // If ambient is disabled, just smoothly move to the base position (handles the end of inertia).
+            const smoothFactor = smoothnessSettings.leftSmoothFactor;
+            newPitch = smoothInterpolate(currentPitch, basePitch, smoothFactor);
+            newBearing = smoothInterpolate(currentBearing, baseBearing, smoothFactor);
+            newLatitude = smoothInterpolate(currentLatitude, baseLatitude, smoothFactor);
+            newLongitude = smoothInterpolate(currentLongitude, baseLongitude, smoothFactor);
+            newZoom = smoothInterpolate(currentZoom, baseZoom, smoothFactor);
+          }
+        }
+        
+        // Final clamping and state update
+        newPitch = Math.max(0, Math.min(85, newPitch));
+        newZoom = Math.max(smoothnessSettings.minZoom, Math.min(smoothnessSettings.maxZoom, newZoom));
+        const finalClamped = clampToRadius(newLatitude, newLongitude);
 
         return {
           ...prev,
-          zoom: newZoom,
           pitch: newPitch,
-          transitionDuration: 0,
+          bearing: newBearing,
+          latitude: finalClamped.latitude,
+          longitude: finalClamped.longitude,
+          zoom: newZoom,
+          transitionDuration: 0 // We are controlling transitions manually
         };
-      }
-      
-      const {
-        pitch: currentPitch,
-        bearing: currentBearing,
-        latitude: currentLatitude,
-        longitude: currentLongitude,
-        zoom: currentZoom
-      } = prev;
+      });
+      animationFrameRef.current = requestAnimationFrame(smoothUpdate);
+    };
 
-      prevViewStateRef.current = { ...prev };
-
-      let newPitch = currentPitch;
-      let newBearing = currentBearing;
-      let newLatitude = currentLatitude;
-      let newLongitude = currentLongitude;
-      let newZoom = currentZoom;
-      
-      // --- ACTIVE DRAGGING LOGIC ---
-      if (isDraggingRef.current || isTouchDraggingRef.current) {
-        shouldStayAtPinPositionRef.current = false;
-        isInertiaActiveRef.current = false; // No inertia during active drag
-        
-        newPitch = smoothInterpolate(currentPitch, targetViewRef.current.pitch, smoothnessSettings.dragLerpFactor);
-        newBearing = smoothInterpolate(currentBearing, targetViewRef.current.bearing, smoothnessSettings.dragLerpFactor);
-        newLatitude = smoothInterpolate(currentLatitude, targetPositionRef.current.latitude, smoothnessSettings.dragLerpFactor);
-        newLongitude = smoothInterpolate(currentLongitude, targetPositionRef.current.longitude, smoothnessSettings.dragLerpFactor);
-        newZoom = smoothInterpolate(currentZoom, baseZoomRef.current + tempZoomOffsetRef.current, smoothnessSettings.dragLerpFactor);
-
-        const clamped = clampToRadius(newLatitude, newLongitude);
-        newLatitude = clamped.latitude;
-        newLongitude = clamped.longitude;
-
-      } else {
-        
-        let baseLatitude, baseLongitude, basePitch, baseBearing, baseZoom;
-
-        // Check if inertia is active
-        const hasInertia = (
-          Math.abs(leftDragVelocityRef.current.bearing) > 0.01 ||
-          Math.abs(leftDragVelocityRef.current.pitch) > 0.01 ||
-          Math.abs(leftDragVelocityRef.current.latitude) > 0.001 ||
-          Math.abs(leftDragVelocityRef.current.longitude) > 0.001 ||
-          Math.abs(leftDragVelocityRef.current.zoom) > 0.01
-        );
-
-        // Update inertia state
-        isInertiaActiveRef.current = hasInertia;
-
-        if (shouldStayAtPinPositionRef.current) {
-          baseLatitude = targetPositionRef.current.latitude;
-          baseLongitude = targetPositionRef.current.longitude;
-          basePitch = targetViewRef.current.pitch;
-          baseBearing = targetViewRef.current.bearing;
-          baseZoom = targetPositionRef.current.zoom;
-          leftDragVelocityRef.current = { bearing: 0, pitch: 0, latitude: 0, longitude: 0, zoom: 0 };
-        
-        } else if (hasInertia) {
-          // Apply velocity and get new positions
-          baseBearing = currentBearing + leftDragVelocityRef.current.bearing;
-          basePitch = currentPitch + leftDragVelocityRef.current.pitch;
-          let tempLat = currentLatitude + leftDragVelocityRef.current.latitude;
-          let tempLng = currentLongitude + leftDragVelocityRef.current.longitude;
-          
-          const clamped = clampToRadius(tempLat, tempLng);
-          baseLatitude = clamped.latitude;
-          baseLongitude = clamped.longitude;
-          
-          if (clamped.isAtBoundary) {
-  // More controlled bounce with velocity reduction
-            const bounceFactor = 0.3; // Reduced from 0.6
-            leftDragVelocityRef.current.latitude =0;
-            leftDragVelocityRef.current.longitude =0;
-            
-            // Apply additional damping to all velocities on boundary hit
-            leftDragVelocityRef.current.bearing *= 0.7;
-            leftDragVelocityRef.current.pitch *= 0.7;
-            leftDragVelocityRef.current.zoom *= 0.8;
-          }
-
-          baseZoom = currentZoom + leftDragVelocityRef.current.zoom;
-
-          // CRITICAL FIX: Update target references during inertia
-          targetPositionRef.current = {
-            latitude: baseLatitude,
-            longitude: baseLongitude,
-            zoom: baseZoom
-          };
-          targetViewRef.current = {
-            pitch: basePitch,
-            bearing: baseBearing
-          };
-          baseZoomRef.current = baseZoom;
-
-          // Apply damping
-          const decay = 0.97;
-          leftDragVelocityRef.current.bearing *= decay;
-          leftDragVelocityRef.current.pitch *= decay;
-          leftDragVelocityRef.current.latitude *= decay;
-          leftDragVelocityRef.current.longitude *= decay;
-          leftDragVelocityRef.current.zoom *= 0.97;
-        } else {
-          // NO INERTIA - Camera is idle
-          baseLatitude = targetPositionRef.current.latitude;
-          baseLongitude = targetPositionRef.current.longitude;
-          basePitch = targetViewRef.current.pitch;
-          baseBearing = targetViewRef.current.bearing;
-          baseZoom = targetPositionRef.current.zoom;
-        }
-
-        // AMBIENT MOTION - Only apply when inertia is NOT active
-        if (ambientMovementEnabled && !isInertiaActiveRef.current) {
-          const mouseInfluenceX = mouseInfluenceRef.current.x;
-          const mouseInfluenceY = mouseInfluenceRef.current.y;
-
-          const pitchInfluence = mouseInfluenceY * smoothnessSettings.ambientMaxPitchOffset;
-          const bearingInfluence = mouseInfluenceX * smoothnessSettings.ambientMaxBearingOffset;
-
-          const ambientTargetPitch = basePitch + pitchInfluence;
-          const ambientTargetBearing = baseBearing + bearingInfluence;
-          const ambientTargetLatitude = baseLatitude + (mouseInfluenceY * smoothnessSettings.ambientMaxLatOffset);
-          const ambientTargetLongitude = baseLongitude + (mouseInfluenceX * smoothnessSettings.ambientMaxLngOffset);
-          
-          const smoothFactor = 1 - smoothnessSettings.ambientSmoothness;
-          newPitch = smoothInterpolate(currentPitch, ambientTargetPitch, smoothFactor);
-          newBearing = smoothInterpolate(currentBearing, ambientTargetBearing, smoothFactor);
-          newLatitude = smoothInterpolate(currentLatitude, ambientTargetLatitude, smoothFactor);
-          newLongitude = smoothInterpolate(currentLongitude, ambientTargetLongitude, smoothFactor);
-          newZoom = smoothInterpolate(currentZoom, baseZoom, smoothFactor);
-
-        } else {
-          // No ambient motion (either disabled or inertia is active)
-          const smoothFactor = smoothnessSettings.leftSmoothFactor;
-          newPitch = smoothInterpolate(currentPitch, basePitch, smoothFactor);
-          newBearing = smoothInterpolate(currentBearing, baseBearing, smoothFactor);
-          newLatitude = smoothInterpolate(currentLatitude, baseLatitude, smoothFactor);
-          newLongitude = smoothInterpolate(currentLongitude, baseLongitude, smoothFactor);
-          newZoom = smoothInterpolate(currentZoom, baseZoom, smoothFactor);
-        }
-      }
-      
-      // Final clamping and state update
-      newPitch = Math.max(0, Math.min(85, newPitch));
-      newZoom = Math.max(smoothnessSettings.minZoom, Math.min(smoothnessSettings.maxZoom, newZoom));
-      const finalClamped = clampToRadius(newLatitude, newLongitude);
-
-      return {
-        ...prev,
-        pitch: newPitch,
-        bearing: newBearing,
-        latitude: finalClamped.latitude,
-        longitude: finalClamped.longitude,
-        zoom: newZoom,
-        transitionDuration: 0
-      };
-    });
     animationFrameRef.current = requestAnimationFrame(smoothUpdate);
-  };
-
-  animationFrameRef.current = requestAnimationFrame(smoothUpdate);
-  return () => cancelAnimationFrame(animationFrameRef.current);
-}, [smoothnessSettings, ambientMovementEnabled, isInWheelMode, isPinTransition]);
-
+    return () => cancelAnimationFrame(animationFrameRef.current);
+  }, [smoothnessSettings, ambientMovementEnabled, isInWheelMode, isPinTransition]); // Dependencies
 
   useEffect(() => {
     const handleDragMovement = (x, y, buttons) => {
@@ -694,54 +675,37 @@ useEffect(() => {
 
 
 const commonDragEndLogic = (isTouchEvent = false) => {
-  // Don't reset floating velocity - let it work with inertia
-  // floatingVelocityRef.current = { x: 0, y: 0 }; // Remove this line
+  // FIX: Reset the ambient floating velocity when a drag ends.
+  // This prevents leftover ambient motion from interfering with the new drag inertia.
+  floatingVelocityRef.current = { x: 0, y: 0 };
 
   if (prevViewStateRef.current && viewState) {
-    // Use the simpler velocity calculation from the previous version
     const bearingDelta = viewState.bearing - prevViewStateRef.current.bearing;
-    const pitchDelta = (isDraggingRef.current && !isZoomDraggingRef.current && !isTouchEvent) 
-      ? (viewState.pitch - prevViewStateRef.current.pitch) 
-      : 0;
+    const pitchDelta = (isDraggingRef.current && !isZoomDraggingRef.current && !isTouchEvent) ? (viewState.pitch - prevViewStateRef.current.pitch) : 0;
     const latDelta = viewState.latitude - prevViewStateRef.current.latitude;
     const lngDelta = viewState.longitude - prevViewStateRef.current.longitude;
+    const zoomDelta = (viewState.zoom - prevViewStateRef.current.zoom);
 
-    // Use a consistent inertia multiplier (from previous version)
-    const inertiaMultiplier = 1.2;
-    let zoomVelocity = 0;
-
-    if (!shouldStayAtPinPositionRef.current) {
-      const currentEffectiveZoom = baseZoomRef.current + tempZoomOffsetRef.current;
-      const zoomDiffToStable = SMOOTH_DRAG_ZOOM_LEVEL - currentEffectiveZoom;
-
-      if (Math.abs(zoomDiffToStable) > 0.01) {
-        zoomVelocity = zoomDiffToStable * 0.05;
-      }
-    }
-
-    // Apply inertia multiplier to create smooth continuation
     leftDragVelocityRef.current = {
-      bearing: clampVelocity(bearingDelta * inertiaMultiplier, 8),
-      pitch: clampVelocity(pitchDelta * inertiaMultiplier, 5),
-      latitude: clampVelocity(latDelta * inertiaMultiplier, 0.1),
-      longitude: clampVelocity(lngDelta * inertiaMultiplier, 0.1),
-      zoom: clampVelocity(zoomVelocity, 0.3)
+      bearing: clampVelocity(bearingDelta, 2.5),
+      pitch: clampVelocity(pitchDelta, 1.0),
+      latitude: clampVelocity(latDelta, 0.002),
+      longitude: clampVelocity(lngDelta, 0.002),
+      zoom: clampVelocity(zoomDelta, 0.05),
     };
-
-    // Update target references to current position
+    
     targetPositionRef.current = {
-      latitude: viewState.latitude,
-      longitude: viewState.longitude,
-      zoom: viewState.zoom
+        latitude: viewState.latitude,
+        longitude: viewState.longitude,
+        zoom: viewState.zoom
     };
     targetViewRef.current = {
-      pitch: viewState.pitch,
-      bearing: viewState.bearing
+        pitch: viewState.pitch,
+        bearing: viewState.bearing
     };
     baseZoomRef.current = viewState.zoom;
   }
 
-  // Reset drag states
   if (isTouchEvent) {
     isTouchDraggingRef.current = false;
   } else {
@@ -750,8 +714,7 @@ const commonDragEndLogic = (isTouchEvent = false) => {
   setIsDragging(false);
   isZoomDraggingRef.current = false;
   tempZoomOffsetRef.current = 0;
-};
- 
+};  
 
     const handleMouseDown = (e) => {
       if (isAnimationLockedRef.current) {
@@ -1186,24 +1149,19 @@ const commonDragEndLogic = (isTouchEvent = false) => {
     return; 
   }
   
-  // FIXED CODE
-if (!interactionState.inTransition && 
-    !isDraggingRef.current && 
-    !isTouchDraggingRef.current && 
-    !isInWheelMode && 
-    !isInertiaActiveRef.current) { // Add this check
-  targetPositionRef.current = {
-    latitude: newDeckViewState.latitude,
-    longitude: newDeckViewState.longitude,
-    zoom: newDeckViewState.zoom
-  };
-  targetViewRef.current = {
-    pitch: newDeckViewState.pitch,
-    bearing: newDeckViewState.bearing,
-  };
-  baseZoomRef.current = newDeckViewState.zoom;
-}
-
+  // ENHANCED FIX: Always keep references in sync when not actively manipulating
+  if (!interactionState.inTransition && !isDraggingRef.current && !isTouchDraggingRef.current && !isInWheelMode) {
+    targetPositionRef.current = {
+      latitude: newDeckViewState.latitude,
+      longitude: newDeckViewState.longitude,
+      zoom: newDeckViewState.zoom
+    };
+    targetViewRef.current = {
+      pitch: newDeckViewState.pitch,
+      bearing: newDeckViewState.bearing,
+    };
+    baseZoomRef.current = newDeckViewState.zoom;
+  }
   
   // ADDITIONAL FIX: Update during wheel mode to prevent position drift
   if (isInWheelMode && !isDraggingRef.current && !isTouchDraggingRef.current) {
@@ -1242,7 +1200,7 @@ if (!interactionState.inTransition &&
         />
       </DeckGL>
 
-       <div className="smoothness-controls" style={{
+       {/* <div className="smoothness-controls" style={{
         position: 'absolute', bottom: '80px', right: '20px', background: 'rgba(0,0,0,0.8)',
         padding: '15px', color: 'white', borderRadius: '8px', zIndex: 1000,
         maxWidth: '320px', fontSize: '12px', display: isMobile ? 'none' : 'block',
@@ -1583,7 +1541,7 @@ if (!interactionState.inTransition &&
             zoomReturnDamping: 0.92,
             floatingMaxInfluence: 15,
             mouseVelocityInfluence: 0.3,
-            leftDampingFactor: 0.97,
+            leftDampingFactor: 0.92,
             leftDragBearingSensitivity: 0.12,
             leftSmoothFactor: 0.08,
             dragLerpFactor: 0.12,
@@ -1600,7 +1558,7 @@ if (!interactionState.inTransition &&
             forwardMovementSpeed: 0.006,
             forwardMovementDamping: 0.94,
             globalSmoothness: 0.85,
-            stopThreshold: 0.0005,
+            stopThreshold: 0.001,
             dynamicPitchEnabled: true,
             minPitchValue: 0,
             maxPitchValue: 60,
@@ -1620,7 +1578,7 @@ if (!interactionState.inTransition &&
         >
           Reset to Defaults
         </button>
-      </div> 
+      </div>  */}
       
 {/* <div className="smoothness-controls" style={{
   position: 'absolute',
