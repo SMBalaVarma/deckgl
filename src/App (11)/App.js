@@ -18,8 +18,8 @@ const CENTER_POINT = {
   latitude: 33.6095571,
   longitude: -84.8039517
 };
-// const MAX_RADIUS = 0.03;
-// const BOUNDARY_COLOR = [255, 255, 255, 100];
+const MAX_RADIUS = 0.03;
+const BOUNDARY_COLOR = [255, 255, 255, 100];
 
 const INITIAL_VIEW_STATE = {
   latitude: CENTER_POINT.latitude,
@@ -206,28 +206,28 @@ function App() {
   });
 
   // Helper function to clamp position to radius
-  // const clampToRadius = (lat, lng) => {
-  //   const latDiff = lat - CENTER_POINT.latitude;
-  //   const lngDiff = (lng - CENTER_POINT.longitude) * Math.cos(CENTER_POINT.latitude * Math.PI / 180);
+  const clampToRadius = (lat, lng) => {
+    const latDiff = lat - CENTER_POINT.latitude;
+    const lngDiff = (lng - CENTER_POINT.longitude) * Math.cos(CENTER_POINT.latitude * Math.PI / 180);
 
-  //   const distance = Math.sqrt(latDiff * latDiff + lngDiff * lngDiff);
+    const distance = Math.sqrt(latDiff * latDiff + lngDiff * lngDiff);
 
-  //   if (distance <= MAX_RADIUS) {
-  //     return {
-  //       latitude: lat,
-  //       longitude: lng,
-  //       isAtBoundary: false
-  //     };
-  //   }
+    if (distance <= MAX_RADIUS) {
+      return {
+        latitude: lat,
+        longitude: lng,
+        isAtBoundary: false
+      };
+    }
 
-  //   // Instead of bounce effect, clamp exactly to the boundary
-  //   const angle = Math.atan2(lngDiff, latDiff);
-  //   return {
-  //     latitude: CENTER_POINT.latitude + MAX_RADIUS * Math.cos(angle),
-  //     longitude: CENTER_POINT.longitude + (MAX_RADIUS * Math.sin(angle)) / Math.cos(CENTER_POINT.latitude * Math.PI / 180),
-  //     isAtBoundary: true
-  //   };
-  // };
+    // Instead of bounce effect, clamp exactly to the boundary
+    const angle = Math.atan2(lngDiff, latDiff);
+    return {
+      latitude: CENTER_POINT.latitude + MAX_RADIUS * Math.cos(angle),
+      longitude: CENTER_POINT.longitude + (MAX_RADIUS * Math.sin(angle)) / Math.cos(CENTER_POINT.latitude * Math.PI / 180),
+      isAtBoundary: true
+    };
+  };
 
   // Clamp velocity to prevent sudden jumps
   const clampVelocity = (velocity, maxValue) => {
@@ -302,6 +302,42 @@ function App() {
 
   useEffect(() => {
   setViewState(INITIAL_VIEW_STATE);
+}, []);
+
+useEffect(() => {
+  const preventBrowserZoom = (e) => {
+    // Prevent Ctrl+scroll zoom
+    if (e.ctrlKey && (e.type === 'wheel' || e.type === 'mousewheel')) {
+      e.preventDefault();
+      e.stopPropagation();
+      return false;
+    }
+    
+    // Prevent Ctrl+Plus/Minus zoom
+    if (e.ctrlKey && (e.key === '+' || e.key === '-' || e.key === '=' || e.key === '_')) {
+      e.preventDefault();
+      e.stopPropagation();
+      return false;
+    }
+    
+    // Prevent Ctrl+0 (reset zoom)
+    if (e.ctrlKey && e.key === '0') {
+      e.preventDefault();
+      e.stopPropagation();
+      return false;
+    }
+  };
+
+  // Add event listeners to document
+  document.addEventListener('wheel', preventBrowserZoom, { passive: false });
+  document.addEventListener('keydown', preventBrowserZoom, { passive: false });
+  document.addEventListener('mousewheel', preventBrowserZoom, { passive: false });
+
+  return () => {
+    document.removeEventListener('wheel', preventBrowserZoom);
+    document.removeEventListener('keydown', preventBrowserZoom);
+    document.removeEventListener('mousewheel', preventBrowserZoom);
+  };
 }, []);
 
 // Hook 2: Trigger the animation ONLY when the map is confirmed to be ready.
@@ -458,9 +494,9 @@ useEffect(() => {
         newLongitude = smoothInterpolate(currentLongitude, targetPositionRef.current.longitude, smoothnessSettings.dragLerpFactor);
         newZoom = smoothInterpolate(currentZoom, baseZoomRef.current + tempZoomOffsetRef.current, smoothnessSettings.dragLerpFactor);
 
-        // const clamped = clampToRadius(newLatitude, newLongitude);
-        // newLatitude = clamped.latitude;
-        // newLongitude = clamped.longitude;
+        const clamped = clampToRadius(newLatitude, newLongitude);
+        newLatitude = clamped.latitude;
+        newLongitude = clamped.longitude;
 
       } else {
         
@@ -493,25 +529,21 @@ useEffect(() => {
           let tempLat = currentLatitude + leftDragVelocityRef.current.latitude;
           let tempLng = currentLongitude + leftDragVelocityRef.current.longitude;
           
-  //         const clamped = clampToRadius(tempLat, tempLng);
-  //         baseLatitude = clamped.latitude;
-  //         baseLongitude = clamped.longitude;
+          const clamped = clampToRadius(tempLat, tempLng);
+          baseLatitude = clamped.latitude;
+          baseLongitude = clamped.longitude;
           
-  //         if (clamped.isAtBoundary) {
-  // // More controlled bounce with velocity reduction
-  //           const bounceFactor = 0.3; // Reduced from 0.6
-  //           leftDragVelocityRef.current.latitude =0;
-  //           leftDragVelocityRef.current.longitude =0;
+          if (clamped.isAtBoundary) {
+  // More controlled bounce with velocity reduction
+            const bounceFactor = 0.3; // Reduced from 0.6
+            leftDragVelocityRef.current.latitude *= -bounceFactor;
+            leftDragVelocityRef.current.longitude *= -bounceFactor;
             
-  //           // Apply additional damping to all velocities on boundary hit
-  //           leftDragVelocityRef.current.bearing *= 0.7;
-  //           leftDragVelocityRef.current.pitch *= 0.7;
-  //           leftDragVelocityRef.current.zoom *= 0.8;
-  //         }
-
-  
-baseLatitude = tempLat;
-baseLongitude = tempLng;
+            // Apply additional damping to all velocities on boundary hit
+            leftDragVelocityRef.current.bearing *= 0.7;
+            leftDragVelocityRef.current.pitch *= 0.7;
+            leftDragVelocityRef.current.zoom *= 0.8;
+          }
 
           baseZoom = currentZoom + leftDragVelocityRef.current.zoom;
 
@@ -577,26 +609,17 @@ baseLongitude = tempLng;
       // Final clamping and state update
       newPitch = Math.max(0, Math.min(85, newPitch));
       newZoom = Math.max(smoothnessSettings.minZoom, Math.min(smoothnessSettings.maxZoom, newZoom));
-      // const finalClamped = clampToRadius(newLatitude, newLongitude);
+      const finalClamped = clampToRadius(newLatitude, newLongitude);
 
-      // return {
-      //   ...prev,
-      //   pitch: newPitch,
-      //   bearing: newBearing,
-      //   latitude: finalClamped.latitude,
-      //   longitude: finalClamped.longitude,
-      //   zoom: newZoom,
-      //   transitionDuration: 0
-      // };
       return {
-  ...prev,
-  pitch: newPitch,
-  bearing: newBearing,
-  latitude: newLatitude,
-  longitude: newLongitude,
-  zoom: newZoom,
-  transitionDuration: 0
-};
+        ...prev,
+        pitch: newPitch,
+        bearing: newBearing,
+        latitude: finalClamped.latitude,
+        longitude: finalClamped.longitude,
+        zoom: newZoom,
+        transitionDuration: 0
+      };
     });
     animationFrameRef.current = requestAnimationFrame(smoothUpdate);
   };
@@ -689,18 +712,13 @@ baseLongitude = tempLng;
     const newLat = targetPositionRef.current.latitude + Math.cos(bearingRad) * moveDistance;
     const newLng = targetPositionRef.current.longitude + Math.sin(bearingRad) * moveDistance;
 
-    // const clamped = clampToRadius(newLat, newLng);
+    const clamped = clampToRadius(newLat, newLng);
 
-    // targetPositionRef.current = {
-    //   ...targetPositionRef.current,
-    //   latitude: clamped.latitude,
-    //   longitude: clamped.longitude
-    // };
     targetPositionRef.current = {
-  ...targetPositionRef.current,
-  latitude: newLat,
-  longitude: newLng
-};
+      ...targetPositionRef.current,
+      latitude: clamped.latitude,
+      longitude: clamped.longitude
+    };
   }
   if (isDraggingRef.current) {
       dragPrevRef.current = { x, y };
@@ -1013,31 +1031,31 @@ const commonDragEndLogic = (isTouchEvent = false) => {
     }
   }, []);
 
-  // const generateBoundaryCircle = () => {
-  //   return Array.from({ length: 360 }, (_, i) => {
-  //     const angle = (i * Math.PI) / 180;
+  const generateBoundaryCircle = () => {
+    return Array.from({ length: 360 }, (_, i) => {
+      const angle = (i * Math.PI) / 180;
 
-  //     return [
-  //       CENTER_POINT.longitude + (MAX_RADIUS * Math.cos(angle) / Math.cos(CENTER_POINT.latitude * Math.PI / 180)),
-  //       CENTER_POINT.latitude + MAX_RADIUS * Math.sin(angle)
-  //     ];
-  //   });
-  // };
+      return [
+        CENTER_POINT.longitude + (MAX_RADIUS * Math.cos(angle) / Math.cos(CENTER_POINT.latitude * Math.PI / 180)),
+        CENTER_POINT.latitude + MAX_RADIUS * Math.sin(angle)
+      ];
+    });
+  };
 
   const layers = [
 
-    // new PathLayer({
-    //   id: 'boundary-circle',
-    //   data: [{
-    //     path: generateBoundaryCircle(),
-    //     color: BOUNDARY_COLOR
-    //   }],
-    //   getPath: d => d.path,
-    //   getColor: d => d.color,
-    //   getWidth: 2,
-    //   widthMinPixels: 1,
-    //   pickable: false
-    // }),
+    new PathLayer({
+      id: 'boundary-circle',
+      data: [{
+        path: generateBoundaryCircle(),
+        color: BOUNDARY_COLOR
+      }],
+      getPath: d => d.path,
+      getColor: d => d.color,
+      getWidth: 2,
+      widthMinPixels: 1,
+      pickable: false
+    }),
 
     new IconLayer({
       id: 'nationalParksIcons-' + selectedId,
@@ -1253,10 +1271,6 @@ if (!interactionState.inTransition &&
             setIsLoading(false); // Keep your existing logic
             setIsMapLoaded(true); // Add the new readiness flag
           }}
-          optimizeForTerrain={true}
-          antialias={true}
-          preserveDrawingBuffer={false}
-          failIfMajorPerformanceCaveat={false}
         />
       </DeckGL>
 
