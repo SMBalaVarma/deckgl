@@ -559,7 +559,7 @@ function App() {
     const handleMouseMove = (e) => {
         if (isDraggingRef.current) {
             handleDragMovement(e.clientX, e.clientY, e.buttons);
-        } else if (ambientMovementEnabled && !shouldStayAtPinPositionRef.current) {
+        } else if (ambientMovementEnabled ) {
             const { innerWidth, innerHeight } = window;
             const xNorm = (e.clientX / innerWidth) * 2 - 1;
             const yNorm = (e.clientY / innerHeight) * 2 - 1;
@@ -573,8 +573,8 @@ function App() {
 //     if (target.closest('a, button, input')) {
 //       return; // Ignore touches on UI elements
 //     }
-        if (e.touches.length === 1) {
-            e.preventDefault();
+if (e.touches.length === 1) {
+          e.preventDefault();
             const touch = e.touches[0];
             const { latitude, longitude, zoom, pitch, bearing } = viewState;
             if (selectedId) {
@@ -1223,7 +1223,15 @@ function App() {
         setSelectedPin(null); // Clear selected pin data
         setHoverInfo(null); 
             playInitialZoom(1000);
-          }}><img src={mapRevertIcon} alt="Map" /></a>
+          }}
+          onTouchEnd={(e) => {
+      e.preventDefault();
+      e.stopPropagation(); // <-- Add this
+      setSelectedId(null);
+      setSelectedPin(null);
+      setHoverInfo(null);
+      playInitialZoom(1000);
+    }}><img src={mapRevertIcon} alt="Map" /></a>
           </li>
           <li><a href="#" target='_blank'  rel="noopener noreferrer"><img src={liveTrackIcon} alt="Live Track" /></a></li>
         </ul>
