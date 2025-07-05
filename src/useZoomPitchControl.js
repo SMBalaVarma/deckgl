@@ -21,7 +21,7 @@ const useZoomPitchControl = ({
   // Merge user config with defaults
   const config = {
     zoomSensitivity: 0.2,
-    touchZoomSensitivity: 0.005, // Sensitivity for pinch-to-zoom
+    touchZoomSensitivity: 0.1, // Sensitivity for pinch-to-zoom
     minZoom: 13.5,
     maxZoom: 16.0,
     minPitch: 0,
