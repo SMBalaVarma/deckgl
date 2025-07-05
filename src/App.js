@@ -157,7 +157,7 @@ function App() {
     enabled: isZoomPitchControlEnabled,
     config: {
       zoomSensitivity: 0.2, // A smaller value gives finer control
-      pinchSensitivity: 0.005,
+      pinchSensitivity: 0.05,
       minZoom: 13.0,
       maxZoom: 16.0,
       minPitch: 0,
@@ -1220,7 +1220,7 @@ if (e.touches.length === 1) {
           <li><a href="#" onClick={(e) => {
             e.preventDefault();
             setSelectedId(null);  // Clear selected pin
-            setSelectedPin(null); // Clear selected pin data
+            setSelectedPin(null); 
             setHoverInfo(null); 
             playInitialZoom(1000);
           }}

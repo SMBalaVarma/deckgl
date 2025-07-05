@@ -5,12 +5,7 @@ import { useEffect, useCallback, useRef } from 'react';
 /**
  * A custom hook to control camera zoom and pitch based on wheel and touch events.
  * It integrates with an existing animation loop by updating target refs.
- *
- * @param {object} params - The hook's parameters.
- * @param {React.MutableRefObject} params.targetPositionRef - Ref for the target position (lat, lng, zoom).
- * @param {React.MutableRefObject} params.targetViewRef - Ref for the target view (pitch, bearing).
- * @param {boolean} params.enabled - A flag to enable or disable the hook's functionality.
- * @param {object} params.config - Configuration for the zoom/pitch behavior.
+ * ... (rest of the JSDoc)
  */
 const useZoomPitchControl = ({
   targetPositionRef,
@@ -20,8 +15,8 @@ const useZoomPitchControl = ({
 }) => {
   // Merge user config with defaults
   const config = {
-    zoomSensitivity: 0.2,
-    touchZoomSensitivity: 0.1, // Sensitivity for pinch-to-zoom
+    zoomSensitivity: 2,
+    touchZoomSensitivity: 0.02,
     minZoom: 13.5,
     maxZoom: 16.0,
     minPitch: 0,
@@ -29,8 +24,11 @@ const useZoomPitchControl = ({
     ...userConfig,
   };
   
-  // Ref to store the previous distance between two fingers for pinch-zoom calculation
-  const pinchPrevDistRef = useRef(null);
+  // --- Refs for pinch-to-zoom gesture ---
+  const pinchStartZoomRef = useRef(null);
+  const pinchStartDistRef = useRef(null);
+  const isPinchingRef = useRef(false);
+  const lastUpdateRef = useRef({ zoom: null, pitch: null }); // Track last update
 
   // Helper function to interpolate pitch based on the current zoom level.
   const calculateTargetPitch = useCallback((zoom) => {
@@ -43,90 +41,104 @@ const useZoomPitchControl = ({
     return minPitch + progress * (maxPitch - minPitch);
   }, [config]);
 
-  // A generic function to apply a zoom delta, clamp it, and update the refs.
-  // This can be used by both wheel and touch handlers.
-  const applyZoomDelta = useCallback((zoomDelta) => {
-    const currentZoom = targetPositionRef.current.zoom;
-    
-    // Calculate the new zoom level
-    let newZoom = currentZoom + zoomDelta;
-
+  // A function to update both zoom and pitch together with forced synchronization
+  const updateZoomAndPitch = useCallback((newZoomValue) => {
     // Clamp the zoom to the desired min/max range
-    newZoom = Math.max(config.minZoom, Math.min(config.maxZoom, newZoom));
-
-    // Calculate the corresponding pitch for the new zoom level
+    const newZoom = Math.max(config.minZoom, Math.min(config.maxZoom, newZoomValue));
     const newPitch = calculateTargetPitch(newZoom);
 
-    // Update the target refs. The main component's animation loop will handle the smooth transition.
-    targetPositionRef.current.zoom = newZoom;
-    targetViewRef.current.pitch = newPitch;
-  }, [config, targetPositionRef, targetViewRef, calculateTargetPitch]);
+    // Store the values we're about to set
+    lastUpdateRef.current = { zoom: newZoom, pitch: newPitch };
 
+    // Force both updates to happen in the same JavaScript execution context
+    // This prevents any async behavior from separating the updates
+    const currentPosition = targetPositionRef.current;
+    const currentView = targetViewRef.current;
+    
+    // Update both refs with a single assignment each
+    targetPositionRef.current = { ...currentPosition, zoom: newZoom };
+    targetViewRef.current = { ...currentView, pitch: newPitch };
+    
+    // Force a microtask to ensure both updates are committed
+    Promise.resolve().then(() => {
+      // Verify the updates took effect
+      if (targetPositionRef.current.zoom !== newZoom || targetViewRef.current.pitch !== newPitch) {
+        console.warn('Zoom/Pitch update synchronization failed, forcing re-update');
+        targetPositionRef.current = { ...targetPositionRef.current, zoom: newZoom };
+        targetViewRef.current = { ...targetViewRef.current, pitch: newPitch };
+      }
+    });
+  }, [config, targetPositionRef, targetViewRef, calculateTargetPitch]);
 
   const handleWheel = useCallback((event) => {
     if (!enabled) return;
     event.preventDefault();
 
     const zoomDelta = -(event.deltaY / 100) * config.zoomSensitivity;
-    applyZoomDelta(zoomDelta);
-  }, [enabled, config.zoomSensitivity, applyZoomDelta]);
+    const newZoom = targetPositionRef.current.zoom + zoomDelta;
+    updateZoomAndPitch(newZoom);
+  }, [enabled, config.zoomSensitivity, updateZoomAndPitch, targetPositionRef]);
 
   // --- TOUCH HANDLERS ---
 
   const handleTouchStart = useCallback((event) => {
     if (!enabled) return;
-    // Check for two-finger touch to start the pinch gesture
+    
     if (event.touches.length === 2) {
-      event.preventDefault(); // Prevent default browser actions like page zoom
+      event.preventDefault();
       const t1 = event.touches[0];
       const t2 = event.touches[1];
-      // Calculate and store the initial distance
-      const dist = Math.hypot(t1.clientX - t2.clientX, t1.clientY - t2.clientY);
-      pinchPrevDistRef.current = dist;
+      
+      pinchStartDistRef.current = Math.hypot(t1.clientX - t2.clientX, t1.clientY - t2.clientY);
+      pinchStartZoomRef.current = targetPositionRef.current.zoom;
+      isPinchingRef.current = true;
     }
-  }, [enabled]);
+  }, [enabled, targetPositionRef]);
 
   const handleTouchMove = useCallback((event) => {
-    // A pinch gesture must be active (prev dist is not null) and must have two fingers
-    if (!enabled || pinchPrevDistRef.current === null || event.touches.length !== 2) {
-      return;
+    if (!enabled || !isPinchingRef.current) return;
+    
+    if (event.touches.length >= 2) {
+      event.preventDefault();
+      
+      const t1 = event.touches[0];
+      const t2 = event.touches[1];
+      const currentDist = Math.hypot(t1.clientX - t2.clientX, t1.clientY - t2.clientY);
+
+      const deltaDistance = currentDist - pinchStartDistRef.current;
+      const zoomDelta = deltaDistance * config.touchZoomSensitivity;
+      const newZoom = pinchStartZoomRef.current + zoomDelta;
+      
+      // Use our synchronized update function
+      updateZoomAndPitch(newZoom);
     }
-    event.preventDefault();
+  }, [enabled, config.touchZoomSensitivity, updateZoomAndPitch]);
 
-    const t1 = event.touches[0];
-    const t2 = event.touches[1];
-    const currentDist = Math.hypot(t1.clientX - t2.clientX, t1.clientY - t2.clientY);
-
-    // Calculate the change in distance from the last move event
-    const deltaDistance = currentDist - pinchPrevDistRef.current;
-
-    // Convert the distance change to a zoom delta
-    const zoomDelta = deltaDistance * config.touchZoomSensitivity;
-
-    applyZoomDelta(zoomDelta);
-
-    // Update the previous distance for the next move event
-    pinchPrevDistRef.current = currentDist;
-  }, [enabled, config.touchZoomSensitivity, applyZoomDelta]);
-
-  const handleTouchEnd = useCallback(() => {
-    // Reset pinch tracking when the gesture ends
-    pinchPrevDistRef.current = null;
-  }, []);
-
+  const handleTouchEnd = useCallback((event) => {
+    if (!enabled) return;
+    
+    if (event.touches.length < 2) {
+      // Final synchronization update
+      if (isPinchingRef.current && lastUpdateRef.current.zoom !== null) {
+        updateZoomAndPitch(lastUpdateRef.current.zoom);
+      }
+      
+      // Reset gesture state
+      pinchStartDistRef.current = null;
+      pinchStartZoomRef.current = null;
+      isPinchingRef.current = false;
+      lastUpdateRef.current = { zoom: null, pitch: null };
+    }
+  }, [enabled, updateZoomAndPitch]);
 
   useEffect(() => {
     const element = window;
 
-    // Add wheel event listener
     element.addEventListener('wheel', handleWheel, { passive: false });
-
-    // Add touch event listeners for pinch-to-zoom
     element.addEventListener('touchstart', handleTouchStart, { passive: false });
     element.addEventListener('touchmove', handleTouchMove, { passive: false });
     element.addEventListener('touchend', handleTouchEnd, { passive: false });
 
-    // Cleanup: remove all event listeners when the component unmounts
     return () => {
       element.removeEventListener('wheel', handleWheel);
       element.removeEventListener('touchstart', handleTouchStart);
