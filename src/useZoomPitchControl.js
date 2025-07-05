@@ -27,8 +27,7 @@ const useZoomPitchControl = ({
   // --- Refs for pinch-to-zoom gesture ---
   const pinchStartZoomRef = useRef(null);
   const pinchStartDistRef = useRef(null);
-  const isPinchingRef = useRef(false);
-  const lastUpdateRef = useRef({ zoom: null, pitch: null }); // Track last update
+  const isPinchingRef = useRef(false); // Track if we're in a pinch gesture
 
   // Helper function to interpolate pitch based on the current zoom level.
   const calculateTargetPitch = useCallback((zoom) => {
@@ -41,33 +40,19 @@ const useZoomPitchControl = ({
     return minPitch + progress * (maxPitch - minPitch);
   }, [config]);
 
-  // A function to update both zoom and pitch together with forced synchronization
-  const updateZoomAndPitch = useCallback((newZoomValue) => {
+  // A generic function to set a new zoom level, clamp it, and update the refs.
+  // This ensures both zoom and pitch are updated simultaneously.
+  const setZoom = useCallback((newZoomValue) => {
     // Clamp the zoom to the desired min/max range
     const newZoom = Math.max(config.minZoom, Math.min(config.maxZoom, newZoomValue));
+
+    // Calculate the corresponding pitch for the new zoom level
     const newPitch = calculateTargetPitch(newZoom);
 
-    // Store the values we're about to set
-    lastUpdateRef.current = { zoom: newZoom, pitch: newPitch };
-
-    // Force both updates to happen in the same JavaScript execution context
-    // This prevents any async behavior from separating the updates
-    const currentPosition = targetPositionRef.current;
-    const currentView = targetViewRef.current;
-    
-    // Update both refs with a single assignment each
-    targetPositionRef.current = { ...currentPosition, zoom: newZoom };
-    targetViewRef.current = { ...currentView, pitch: newPitch };
-    
-    // Force a microtask to ensure both updates are committed
-    Promise.resolve().then(() => {
-      // Verify the updates took effect
-      if (targetPositionRef.current.zoom !== newZoom || targetViewRef.current.pitch !== newPitch) {
-        console.warn('Zoom/Pitch update synchronization failed, forcing re-update');
-        targetPositionRef.current = { ...targetPositionRef.current, zoom: newZoom };
-        targetViewRef.current = { ...targetViewRef.current, pitch: newPitch };
-      }
-    });
+    // Update BOTH refs in a single operation to ensure they're truly synchronized
+    // Use Object.assign to make it atomic
+    Object.assign(targetPositionRef.current, { zoom: newZoom });
+    Object.assign(targetViewRef.current, { pitch: newPitch });
   }, [config, targetPositionRef, targetViewRef, calculateTargetPitch]);
 
   const handleWheel = useCallback((event) => {
@@ -76,19 +61,21 @@ const useZoomPitchControl = ({
 
     const zoomDelta = -(event.deltaY / 100) * config.zoomSensitivity;
     const newZoom = targetPositionRef.current.zoom + zoomDelta;
-    updateZoomAndPitch(newZoom);
-  }, [enabled, config.zoomSensitivity, updateZoomAndPitch, targetPositionRef]);
+    setZoom(newZoom);
+  }, [enabled, config.zoomSensitivity, setZoom, targetPositionRef]);
 
-  // --- TOUCH HANDLERS ---
+  // --- TOUCH HANDLERS (IMPROVED LOGIC) ---
 
   const handleTouchStart = useCallback((event) => {
     if (!enabled) return;
     
+    // Check for two-finger touch to start the pinch gesture
     if (event.touches.length === 2) {
       event.preventDefault();
       const t1 = event.touches[0];
       const t2 = event.touches[1];
       
+      // Initialize pinch gesture
       pinchStartDistRef.current = Math.hypot(t1.clientX - t2.clientX, t1.clientY - t2.clientY);
       pinchStartZoomRef.current = targetPositionRef.current.zoom;
       isPinchingRef.current = true;
@@ -98,6 +85,7 @@ const useZoomPitchControl = ({
   const handleTouchMove = useCallback((event) => {
     if (!enabled || !isPinchingRef.current) return;
     
+    // Continue pinch gesture even if finger count changes momentarily
     if (event.touches.length >= 2) {
       event.preventDefault();
       
@@ -105,31 +93,36 @@ const useZoomPitchControl = ({
       const t2 = event.touches[1];
       const currentDist = Math.hypot(t1.clientX - t2.clientX, t1.clientY - t2.clientY);
 
+      // Calculate change from the START of the gesture
       const deltaDistance = currentDist - pinchStartDistRef.current;
       const zoomDelta = deltaDistance * config.touchZoomSensitivity;
+      
+      // Calculate the new zoom based on the initial zoom + total change so far
       const newZoom = pinchStartZoomRef.current + zoomDelta;
       
-      // Use our synchronized update function
-      updateZoomAndPitch(newZoom);
+      // Clamp the zoom immediately
+      const clampedZoom = Math.max(config.minZoom, Math.min(config.maxZoom, newZoom));
+      
+      // Calculate pitch immediately
+      const newPitch = calculateTargetPitch(clampedZoom);
+      
+      // Update both values directly and simultaneously
+      targetPositionRef.current.zoom = clampedZoom;
+      targetViewRef.current.pitch = newPitch;
     }
-  }, [enabled, config.touchZoomSensitivity, updateZoomAndPitch]);
+  }, [enabled, config.touchZoomSensitivity, config.minZoom, config.maxZoom, calculateTargetPitch, targetPositionRef, targetViewRef]);
 
   const handleTouchEnd = useCallback((event) => {
     if (!enabled) return;
     
+    // End pinch gesture when we have fewer than 2 touches
     if (event.touches.length < 2) {
-      // Final synchronization update
-      if (isPinchingRef.current && lastUpdateRef.current.zoom !== null) {
-        updateZoomAndPitch(lastUpdateRef.current.zoom);
-      }
-      
       // Reset gesture state
       pinchStartDistRef.current = null;
       pinchStartZoomRef.current = null;
       isPinchingRef.current = false;
-      lastUpdateRef.current = { zoom: null, pitch: null };
     }
-  }, [enabled, updateZoomAndPitch]);
+  }, [enabled]);
 
   useEffect(() => {
     const element = window;
