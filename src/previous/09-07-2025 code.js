@@ -9,11 +9,16 @@ import mapRevertIcon from './map-revert.png';
 import liveTrackIcon from './livetrack.png';
 import { useCallback } from 'react';
 
+// ==========================================================
+// 1. IMPORT THE NEW HOOK
+// ==========================================================
+import useZoomPitchControl from './useZoomPitchControl';
+
 const MAPBOX_TOKEN = 'pk.eyJ1IjoieGNoYW1wcyIsImEiOiJjbThlY3BzbWgwMDVrMmlzNWF0Z3BpNGpzIn0.SeVutB4KYQcAvRvoQC3DCg';
 const MapStyle = 'mapbox://styles/mapbox/satellite-v9';
 const iconUrl = mapIcon;
 
-// Center point and radius configuration
+// ... (rest of your constants)
 const CENTER_POINT = {
   latitude: 33.6095571,
   longitude: -84.8039517
@@ -25,11 +30,12 @@ const INITIAL_VIEW_STATE = {
   latitude: CENTER_POINT.latitude,
   longitude: CENTER_POINT.longitude,
   zoom: 3,
-  pitch: 65,
+  pitch: 68,
   bearing: -30,
   maxZoom: 20,
   minZoom: 1
 };
+
 
 function App() {
   const [hoverInfo, setHoverInfo] = useState(null);
@@ -102,7 +108,7 @@ function App() {
     
     // Enhanced drag settings
     leftDampingFactor: 0.92,
-    leftDragBearingSensitivity: 0.20,
+    leftDragBearingSensitivity: 0.15,
     leftSmoothFactor: 0.08,
     dragLerpFactor: 0.02,
     
@@ -113,16 +119,16 @@ function App() {
     zoomReturnDamping: 0.85,
     zoomReturnCurve: 2.0,
     zoomDamping: 0.88,
-    minZoom: 11,
-    maxZoom: 16,
+    minZoom: 1, // Set overall min/max zoom here
+    maxZoom: 20,
 
     // Enhanced ambient settings
     ambientStrength: 0.02,
     ambientMaxPitch: 0.1,
     ambientMaxBearing: 0.2,
     ambientSmoothness: 0.98,
-    ambientMaxLatOffset: 0.002,
-    ambientMaxLngOffset: 0.001,
+    ambientMaxLatOffset: 0.0004,
+    ambientMaxLngOffset: 0.0004,
     forwardMovementSpeed: 0.06,
     forwardMovementDamping: 0.94,
     
@@ -135,11 +141,30 @@ function App() {
     boundaryResistance: 0.8,
 
     dynamicPitchEnabled: true,
-    minPitchValue: 0,    // Minimum pitch when fully zoomed out
-    maxPitchValue: 75,   // Maximum pitch when fully zoomed in
+    minPitchValue: 63,    // Minimum pitch when fully zoomed out
+    maxPitchValue: 68,   // Maximum pitch when fully zoomed in
     pitchZoomThresholdLow: 11,  // Zoom level where pitch starts decreasing
     pitchZoomThresholdHigh: 14,
   });
+
+  // ==========================================================
+  // 2. CALL THE HOOK WITH CORRECTED CONFIG
+  // ==========================================================
+  const isZoomPitchControlEnabled = !isPinTransition && !shouldStayAtPinPositionRef.current && !isDraggingRef.current;
+  useZoomPitchControl({
+    targetPositionRef,
+    targetViewRef,
+    enabled: isZoomPitchControlEnabled,
+    config: {
+      zoomSensitivity: 0.2, // A smaller value gives finer control
+      pinchSensitivity: 0.05,
+      minZoom: 13.0,
+      maxZoom: 16.0,
+      minPitch: 0,
+      maxPitch: 68,
+    }
+  });
+
 
   // Helper function to clamp position to radius
   const clampToRadius = (lat, lng) => {
@@ -184,30 +209,31 @@ function App() {
     setIsPinTransition(false);
     shouldStayAtPinPositionRef.current = false;
 
-    // Set initial zoom to the smooth drag zoom level
-    baseZoomRef.current = SMOOTH_DRAG_ZOOM_LEVEL;
-    tempZoomOffsetRef.current = 0;
-    isZoomDraggingRef.current = false;
-    setIsAtSmoothDragZoom(true);
+    // Set initial zoom to a level where wheel control can take over
+    const initialControlledZoom = 16.0;
 
+    // ==========================================================
+    // 3. UPDATE playInitialZoom TO START IN THE CORRECT STATE
+    // ==========================================================
     targetPositionRef.current = {
       latitude: CENTER_POINT.latitude,
       longitude: CENTER_POINT.longitude,
-      zoom: SMOOTH_DRAG_ZOOM_LEVEL
+      zoom: initialControlledZoom
     };
     targetViewRef.current = {
-      pitch: INITIAL_VIEW_STATE.pitch,
+      pitch: 68, // Pitch should match the zoom level (60 at zoom 16)
       bearing: INITIAL_VIEW_STATE.bearing
     };
+
     leftDragVelocityRef.current = { bearing: 0, pitch: 0, latitude: 0, longitude: 0, zoom: 0 };
     floatingVelocityRef.current = { x: 0, y: 0 };
 
     setViewState(prev => ({
       ...prev,
       longitude: CENTER_POINT.longitude,
-      latitude: CENTER_POINT.latitude,
-      zoom: SMOOTH_DRAG_ZOOM_LEVEL,
-      pitch: 75,
+      latitude: CENTER_POINT.latitude,                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      
+      zoom: initialControlledZoom,
+      pitch: 68,
       bearing: -20,
       transitionDuration: finalDuration,
       transitionInterpolator: new FlyToInterpolator()
@@ -220,7 +246,8 @@ function App() {
       }
     };
   }, []);
-
+  
+  
   useEffect(() => {
     const timeout = setTimeout(() => {
       playInitialZoom();
@@ -282,213 +309,107 @@ function App() {
         let newLongitude = currentLongitude;
         let newZoom = currentZoom;
 
-        if (isDraggingRef.current) {
+        // Use a single smooth factor for idle interpolation
+        const smoothFactor = 1 - smoothnessSettings.ambientSmoothness;
+
+        if (isDraggingRef.current || isTouchDraggingRef.current) {
           // When dragging starts, disable pin position staying
           shouldStayAtPinPositionRef.current = false;
           
-          // Enhanced drag interpolation with momentum
-          newPitch = smoothInterpolate(currentPitch, targetViewRef.current.pitch, smoothnessSettings.dragLerpFactor);
-          newBearing = smoothInterpolate(currentBearing, targetViewRef.current.bearing, smoothnessSettings.dragLerpFactor);
-          newLatitude = smoothInterpolate(currentLatitude, targetPositionRef.current.latitude, smoothnessSettings.dragLerpFactor);
-          newLongitude = smoothInterpolate(currentLongitude, targetPositionRef.current.longitude, smoothnessSettings.dragLerpFactor);
+          const dragSmoothFactor = smoothnessSettings.dragLerpFactor;
+          newPitch = smoothInterpolate(currentPitch, targetViewRef.current.pitch, dragSmoothFactor);
+          newBearing = smoothInterpolate(currentBearing, targetViewRef.current.bearing, dragSmoothFactor);
+          newLatitude = smoothInterpolate(currentLatitude, targetPositionRef.current.latitude, dragSmoothFactor);
+          newLongitude = smoothInterpolate(currentLongitude, targetPositionRef.current.longitude, dragSmoothFactor);
           
-          // Handle floating zoom effect during drag
-          if (isZoomDraggingRef.current) {
-            const targetZoom = baseZoomRef.current + tempZoomOffsetRef.current;
-            newZoom = smoothInterpolate(currentZoom, targetZoom, smoothnessSettings.dragLerpFactor);
-          } else {
-            newZoom = smoothInterpolate(currentZoom, targetPositionRef.current.zoom, smoothnessSettings.dragLerpFactor);
-          }
-
-          // Apply radius restriction
+          // Handle floating zoom effect during drag (this is for vertical drag, not wheel)
+          const targetZoom = baseZoomRef.current + tempZoomOffsetRef.current;
+          newZoom = smoothInterpolate(currentZoom, targetZoom, dragSmoothFactor);
+          
           const clamped = clampToRadius(newLatitude, newLongitude);
           newLatitude = clamped.latitude;
           newLongitude = clamped.longitude;
-          
-          // Add resistance when at boundary
-          if (clamped.isAtBoundary) {
-            leftDragVelocityRef.current.latitude *= smoothnessSettings.boundaryResistance;
-            leftDragVelocityRef.current.longitude *= smoothnessSettings.boundaryResistance;
-          }
+
         } else {
-          // Enhanced inertia with better damping and zoom support
+          // INERTIA (after drag)
           if (Math.abs(leftDragVelocityRef.current.bearing) > smoothnessSettings.stopThreshold ||
               Math.abs(leftDragVelocityRef.current.pitch) > smoothnessSettings.stopThreshold ||
               Math.abs(leftDragVelocityRef.current.latitude) > smoothnessSettings.stopThreshold ||
-              Math.abs(leftDragVelocityRef.current.longitude) > smoothnessSettings.stopThreshold ||
-              Math.abs(leftDragVelocityRef.current.zoom) > smoothnessSettings.stopThreshold) {
+              Math.abs(leftDragVelocityRef.current.longitude) > smoothnessSettings.stopThreshold) {
             
-            newBearing = currentBearing + leftDragVelocityRef.current.bearing;
-            newPitch = Math.max(0, Math.min(85, currentPitch + leftDragVelocityRef.current.pitch));
-            
-            // Apply velocity first, then clamp to radius
-            let tempLat = currentLatitude + leftDragVelocityRef.current.latitude;
-            let tempLng = currentLongitude + leftDragVelocityRef.current.longitude;
-            const clamped = clampToRadius(tempLat, tempLng);
+            newBearing += leftDragVelocityRef.current.bearing;
+            newPitch = Math.max(0, Math.min(85, newPitch + leftDragVelocityRef.current.pitch));
+            newLatitude += leftDragVelocityRef.current.latitude;
+            newLongitude += leftDragVelocityRef.current.longitude;
+
+            const clamped = clampToRadius(newLatitude, newLongitude);
             newLatitude = clamped.latitude;
             newLongitude = clamped.longitude;
-            
-            // Add resistance when at boundary
-            if (clamped.isAtBoundary) {
-              leftDragVelocityRef.current.latitude *= smoothnessSettings.boundaryResistance;
-              leftDragVelocityRef.current.longitude *= smoothnessSettings.boundaryResistance;
-            }
-            
-            // Smooth zoom return with velocity
-            if (!shouldStayAtPinPositionRef.current) {
-              newZoom = currentZoom + leftDragVelocityRef.current.zoom;
-              
-              const zoomDiff = SMOOTH_DRAG_ZOOM_LEVEL - newZoom;
-              if (Math.abs(zoomDiff) < 0.05) {
-                newZoom = 14;
-                leftDragVelocityRef.current.zoom = 0;
-                tempZoomOffsetRef.current = 0;
-                baseZoomRef.current = 14;
-              } else {
-                leftDragVelocityRef.current.zoom *= smoothnessSettings.zoomDamping;
-                leftDragVelocityRef.current.zoom += zoomDiff * 0.02;
-              }
-            } else {
-              newZoom = currentZoom;
-              leftDragVelocityRef.current.zoom = 0;
-            }
 
-            // Enhanced damping
-            leftDragVelocityRef.current = {
-              bearing: leftDragVelocityRef.current.bearing * smoothnessSettings.leftDampingFactor,
-              pitch: leftDragVelocityRef.current.pitch * smoothnessSettings.leftDampingFactor,
-              latitude: leftDragVelocityRef.current.latitude * smoothnessSettings.leftDampingFactor,
-              longitude: leftDragVelocityRef.current.longitude * smoothnessSettings.leftDampingFactor,
-              zoom: leftDragVelocityRef.current.zoom
-            };
-            
+            // Apply damping
+            leftDragVelocityRef.current.bearing *= smoothnessSettings.leftDampingFactor;
+            leftDragVelocityRef.current.pitch *= smoothnessSettings.leftDampingFactor;
+            leftDragVelocityRef.current.latitude *= smoothnessSettings.leftDampingFactor;
+            leftDragVelocityRef.current.longitude *= smoothnessSettings.leftDampingFactor;
+
+            // After a drag, smoothly return to the target zoom/pitch set by the wheel
+            newZoom = currentZoom + (targetPositionRef.current.zoom - currentZoom) * smoothFactor;
+            newPitch = currentPitch + (targetViewRef.current.pitch - currentPitch) * smoothFactor;
+
+            // Update targets to reflect inertia
             targetViewRef.current = { pitch: newPitch, bearing: newBearing };
-            targetPositionRef.current = { latitude: newLatitude, longitude: newLongitude, zoom: newZoom };
+            targetPositionRef.current.latitude = newLatitude;
+            targetPositionRef.current.longitude = newLongitude;
 
-          } else if (ambientMovementEnabled && !isPinTransition) {
-            // Enhanced ambient movement with floating effect
+          } 
+          // AMBIENT MOVEMENT or WHEEL CONTROL (Idle state)
+          else if (ambientMovementEnabled && !isPinTransition) {
             const basePitch = targetViewRef.current.pitch;
             const baseBearing = targetViewRef.current.bearing;
             const baseLatitude = targetPositionRef.current.latitude;
             const baseLongitude = targetPositionRef.current.longitude;
 
-            const mouseInfluenceX = mouseInfluenceRef.current.x + mouseVelocityRef.current.x * smoothnessSettings.mouseVelocityInfluence;
-            const mouseInfluenceY = mouseInfluenceRef.current.y + mouseVelocityRef.current.y * smoothnessSettings.mouseVelocityInfluence;
+            const mouseInfluenceX = mouseInfluenceRef.current.x;
+            const mouseInfluenceY = mouseInfluenceRef.current.y;
 
             const pitchInfluence = mouseInfluenceY * smoothnessSettings.ambientMaxPitch;
             const bearingInfluence = mouseInfluenceX * smoothnessSettings.ambientMaxBearing;
             const latInfluence = mouseInfluenceY * smoothnessSettings.ambientMaxLatOffset;
             const lngInfluence = mouseInfluenceX * smoothnessSettings.ambientMaxLngOffset;
 
-            floatingVelocityRef.current.x += mouseInfluenceX * smoothnessSettings.floatingStrength;
-            floatingVelocityRef.current.y += mouseInfluenceY * smoothnessSettings.floatingStrength;
+            const ambientTargetPitch = Math.max(0, Math.min(85, basePitch + pitchInfluence));
+            const ambientTargetBearing = baseBearing + bearingInfluence;
             
-            floatingVelocityRef.current.x = clampVelocity(floatingVelocityRef.current.x, smoothnessSettings.floatingMaxInfluence);
-            floatingVelocityRef.current.y = clampVelocity(floatingVelocityRef.current.y, smoothnessSettings.floatingMaxInfluence);
-            
-            const ambientTargetPitch = Math.max(0, Math.min(85, basePitch + pitchInfluence + floatingVelocityRef.current.y));
-            const ambientTargetBearing = baseBearing + bearingInfluence + floatingVelocityRef.current.x;
-            
-            // Calculate ambient target position and clamp to radius
-            let ambientTargetLatitude = baseLatitude + latInfluence + floatingVelocityRef.current.y * 0.001;
-            let ambientTargetLongitude = baseLongitude + lngInfluence + floatingVelocityRef.current.x * 0.001;
+            let ambientTargetLatitude = baseLatitude + latInfluence;
+            let ambientTargetLongitude = baseLongitude + lngInfluence;
             
             const clamped = clampToRadius(ambientTargetLatitude, ambientTargetLongitude);
             ambientTargetLatitude = clamped.latitude;
             ambientTargetLongitude = clamped.longitude;
 
-            floatingVelocityRef.current.x *= smoothnessSettings.floatingDamping;
-            floatingVelocityRef.current.y *= smoothnessSettings.floatingDamping;
-
-            const smoothFactor = 1 - smoothnessSettings.ambientSmoothness;
             newPitch = currentPitch + (ambientTargetPitch - currentPitch) * smoothFactor;
             newBearing = currentBearing + (ambientTargetBearing - currentBearing) * smoothFactor;
             newLatitude = currentLatitude + (ambientTargetLatitude - currentLatitude) * smoothFactor;
             newLongitude = currentLongitude + (ambientTargetLongitude - currentLongitude) * smoothFactor;
             
-            newZoom = baseZoomRef.current;
-            tempZoomOffsetRef.current = 0;
+            // ==========================================================
+            // 4. THE CRUCIAL FIX: Make zoom interpolate to its target
+            //    instead of being reset.
+            // ==========================================================
+            newZoom = currentZoom + (targetPositionRef.current.zoom - currentZoom) * smoothFactor;
+
           } else {
-            // Standard smooth interpolation with radius restriction
-            const smoothFactor = smoothnessSettings.leftSmoothFactor;
+            // Final fallback: smoothly interpolate to target state
             newPitch = currentPitch + (targetViewRef.current.pitch - currentPitch) * smoothFactor;
             newBearing = currentBearing + (targetViewRef.current.bearing - currentBearing) * smoothFactor;
-            
-            // Calculate target position and clamp to radius
-            let targetLat = currentLatitude + (targetPositionRef.current.latitude - currentLatitude) * smoothFactor;
-            let targetLng = currentLongitude + (targetPositionRef.current.longitude - currentLongitude) * smoothFactor;
-            
-            const clamped = clampToRadius(targetLat, targetLng);
-            newLatitude = clamped.latitude;
-            newLongitude = clamped.longitude;
-            
+            newLatitude = currentLatitude + (targetPositionRef.current.latitude - currentLatitude) * smoothFactor;
+            newLongitude = currentLongitude + (targetPositionRef.current.longitude - currentLongitude) * smoothFactor;
             newZoom = currentZoom + (targetPositionRef.current.zoom - currentZoom) * smoothFactor;
-            
-            if (!isDraggingRef.current && Math.abs(newZoom - targetPositionRef.current.zoom) < 0.1) {
-              baseZoomRef.current = targetPositionRef.current.zoom;
-            }
           }
         }
-        
-        // ... (previous parts of smoothUpdate)
 
-        // This replaces the existing block for zoom updates when not staying at a pin,
-        // typically handled during inertia or ambient phases.
-        if (!shouldStayAtPinPositionRef.current) {
-          // Apply zoom velocity from inertia
-          newZoom = currentZoom + leftDragVelocityRef.current.zoom;
-
-          const targetStableZoom = SMOOTH_DRAG_ZOOM_LEVEL;
-          const zoomDiffToStable = targetStableZoom - newZoom;
-
-          // Determine if we should snap to the stable zoom level
-          // Increased snap threshold for robustness (e.g., from 0.05 to 0.08 or 0.1)
-          // Also check if velocity is low or moving towards the target
-          const snapThreshold = 0.08; 
-          const nearStableZoom = Math.abs(zoomDiffToStable) < snapThreshold;
-          const velocityLowOrCorrectDirection = 
-            Math.abs(leftDragVelocityRef.current.zoom) < 0.01 || 
-            (leftDragVelocityRef.current.zoom !== 0 && Math.sign(leftDragVelocityRef.current.zoom) === Math.sign(zoomDiffToStable));
-
-          if (nearStableZoom && velocityLowOrCorrectDirection) {
-            newZoom = targetStableZoom;
-            leftDragVelocityRef.current.zoom = 0;
-            tempZoomOffsetRef.current = 0; // Ensure this is reset
-            baseZoomRef.current = targetStableZoom; // Critical for subsequent drags
-            
-            if (!isAtSmoothDragZoom) {
-              setIsAtSmoothDragZoom(true);
-            }
-          } else {
-            // Apply damping to existing zoom velocity
-            leftDragVelocityRef.current.zoom *= smoothnessSettings.zoomDamping;
-
-            // Apply spring force to pull zoom towards the stable level
-            // You can make the spring factor (0.03 here) a smoothnessSetting if needed
-            leftDragVelocityRef.current.zoom += zoomDiffToStable * 0.03; // Increased from 0.02
-
-            // If velocity becomes extremely small and still not at target, stop it to prevent micro-jitters
-            if (Math.abs(leftDragVelocityRef.current.zoom) < 0.0001) {
-              leftDragVelocityRef.current.zoom = 0;
-            }
-            
-            if (isAtSmoothDragZoom) {
-              setIsAtSmoothDragZoom(false);
-            }
-          }
-        } else {
-          // When shouldStayAtPinPositionRef.current is true (staying at pin)
-          newZoom = currentZoom; // Maintain current zoom (should be pin's zoom)
-          
-          // Ensure baseZoomRef is consistent with the pin's target zoom.
-          // targetPositionRef.current.zoom is updated when flying to a pin.
-          if (baseZoomRef.current !== targetPositionRef.current.zoom) {
-            baseZoomRef.current = targetPositionRef.current.zoom;
-          }
-          leftDragVelocityRef.current.zoom = 0; // No zoom velocity when locked to a pin
-        }
-        
-        newPitch = Math.max(0, Math.min(80, newPitch));
+        // Clamp final values
+        newPitch = Math.max(0, Math.min(85, newPitch));
         newZoom = Math.max(smoothnessSettings.minZoom, Math.min(smoothnessSettings.maxZoom, newZoom));
 
         return {
@@ -506,355 +427,227 @@ function App() {
 
     animationFrameRef.current = requestAnimationFrame(smoothUpdate);
     return () => cancelAnimationFrame(animationFrameRef.current);
-  }, [smoothnessSettings, ambientMovementEnabled]);
+  }, [smoothnessSettings, ambientMovementEnabled, isAtSmoothDragZoom]);
 
-    // Enhanced mouse movement tracking with velocity calculation
-    useEffect(() => {
-  const handleMouseMove = (e) => {
-    const x = e.clientX;
-    const y = e.clientY;
-    const currentTime = Date.now();
-    
-    // Calculate mouse velocity for enhanced floating effect
-    const deltaTime = currentTime - lastMouseTimeRef.current;
-    if (deltaTime > 0) {
-      const deltaX = x - lastMousePosRef.current.x;
-      const deltaY = y - lastMousePosRef.current.y;
-      
-      mouseVelocityRef.current.x = deltaX / deltaTime;
-      mouseVelocityRef.current.y = deltaY / deltaTime;
-      
-      // Clamp velocity
-      mouseVelocityRef.current.x = clampVelocity(mouseVelocityRef.current.x, 2);
-      mouseVelocityRef.current.y = clampVelocity(mouseVelocityRef.current.y, 2);
-    }
-    
-    lastMousePosRef.current = { x, y };
-    lastMouseTimeRef.current = currentTime;
-    
-    if (ambientMovementEnabled && !isDraggingRef.current && !isTouchDraggingRef.current) {
-      const { innerWidth, innerHeight } = window;
-      const xNorm = (x / innerWidth) * 2 - 1;
-      const yNorm = (y / innerHeight) * 2 - 1;
-      
-      mouseInfluenceRef.current = { x: xNorm, y: yNorm };
-      
-      // Enhanced ambient calculation with floating effect
-      ambientInfluenceRef.current = {
-        x: ambientInfluenceRef.current.x * smoothnessSettings.ambientSmoothness +
-           mouseInfluenceRef.current.x * smoothnessSettings.ambientStrength * (1 - smoothnessSettings.ambientSmoothness),
-        y: ambientInfluenceRef.current.y * smoothnessSettings.ambientSmoothness +
-           mouseInfluenceRef.current.y * smoothnessSettings.ambientStrength * (1 - smoothnessSettings.ambientSmoothness)
-      };
-    }
 
-    if (isDraggingRef.current) {
-      handleDragMovement(x, y, e.buttons || 1); // Default to left mouse button
-    }
-  };
+  // ====================================================================================
+  // START OF CONSOLIDATED EVENT HANDLER HOOK
+  // This single useEffect replaces the three separate, conflicting ones from your code.
+  // ====================================================================================
+  useEffect(() => {
+    // This function handles the actual movement logic for both mouse and touch drags
+    const handleDragMovement = (x, y, buttons) => {
+        const prevX = isDraggingRef.current ? dragPrevRef.current.x : touchPrevRef.current.x;
+        const prevY = isDraggingRef.current ? dragPrevRef.current.y : touchPrevRef.current.y;
+        const deltaX = x - prevX;
+        const deltaY = y - prevY;
 
-  // Touch move handler
-  // Replace the existing touch move handler with this updated version
-const handleTouchMove = (e) => {
-  e.preventDefault();
-  
-  if (e.touches.length === 1 && isTouchDraggingRef.current) {
-    const touch = e.touches[0];
-    console.log('Touch Move:', { x: touch.clientX, y: touch.clientY });
-    const x = touch.clientX;
-    const y = touch.clientY;
-    
-    // Calculate delta from previous position
-    const deltaX = x - touchPrevRef.current.x;
-    const deltaY = y - touchPrevRef.current.y;
-    
-    // When touch dragging starts, disable pin position staying (same as mouse)
-    shouldStayAtPinPositionRef.current = false;
-    
-    // Update target view and position
-    targetViewRef.current = {
-      ...targetViewRef.current,
-      bearing: targetViewRef.current.bearing - deltaX * smoothnessSettings.leftDragBearingSensitivity
+        // Hide tooltip on significant drag
+        if ((isDraggingRef.current || isTouchDraggingRef.current) && selectedPin) {
+            const startX = isDraggingRef.current ? dragStartRef.current.x : touchStartRef.current.x;
+            const startY = isDraggingRef.current ? dragStartRef.current.y : touchStartRef.current.y;
+            const dragStartThreshold = 5;
+            if (Math.abs(x - startX) > dragStartThreshold || Math.abs(y - startY) > dragStartThreshold) {
+                setSelectedPin(null);
+            }
+        }
+
+        // Right-click drag for pitch/bearing (mouse only)
+        if (buttons === 2 && isDraggingRef.current) {
+            targetViewRef.current = {
+                pitch: Math.max(0, Math.min(85, targetViewRef.current.pitch - deltaY * 0.25)),
+                bearing: targetViewRef.current.bearing - deltaX * 0.35
+            };
+        } 
+        // Left-click drag or touch drag
+        else if (buttons === 1) { 
+            targetViewRef.current = {
+                ...targetViewRef.current,
+                bearing: targetViewRef.current.bearing - deltaX * smoothnessSettings.leftDragBearingSensitivity
+            };
+
+            const bearingRad = (targetViewRef.current.bearing * Math.PI) / 180;
+            const zoomFactor = Math.pow(2, baseZoomRef.current);
+            const effectiveMoveSpeed = smoothnessSettings.forwardMovementSpeed / zoomFactor * 100;
+
+            const moveDistance = deltaY * effectiveMoveSpeed * 0.5;
+
+            const newLat = targetPositionRef.current.latitude + Math.cos(bearingRad) * moveDistance;
+            const newLng = targetPositionRef.current.longitude + Math.sin(bearingRad) * moveDistance;
+
+            const clamped = clampToRadius(newLat, newLng);
+
+            targetPositionRef.current = {
+                ...targetPositionRef.current,
+                latitude: clamped.latitude,
+                longitude: clamped.longitude
+            };
+        }
+
+        if (isDraggingRef.current) dragPrevRef.current = { x, y };
+        if (isTouchDraggingRef.current) touchPrevRef.current = { x, y };
     };
 
-    // Handle zoom/forward movement
-    isZoomDraggingRef.current = true;
-    const zoomDelta = deltaY * smoothnessSettings.verticalZoomSensitivity;
-    tempZoomOffsetRef.current = Math.max(
-      -smoothnessSettings.zoomFloatRange,
-      Math.min(smoothnessSettings.zoomFloatRange, tempZoomOffsetRef.current + zoomDelta)
-    );
+    // This function handles the logic for when a drag ends, for both mouse and touch
+    const commonDragEndLogic = () => {
+        if (prevViewStateRef.current && viewState) {
+            const bearingDelta = viewState.bearing - prevViewStateRef.current.bearing;
+            const latDelta = viewState.latitude - prevViewStateRef.current.latitude;
+            const lngDelta = viewState.longitude - prevViewStateRef.current.longitude;
+            const pitchDelta = viewState.pitch - prevViewStateRef.current.pitch;
 
-    // Forward movement
-    const bearingRad = (targetViewRef.current.bearing * Math.PI) / 180;
-    const zoomFactor = Math.pow(2, viewState.zoom);
-    const effectiveMoveSpeed = smoothnessSettings.forwardMovementSpeed / zoomFactor * 100;
-    const moveDistance = deltaY * effectiveMoveSpeed * 0.5;
+            const inertiaMultiplier = 1.2;
 
-    const newLat = targetPositionRef.current.latitude + Math.cos(bearingRad) * moveDistance;
-    const newLng = targetPositionRef.current.longitude + Math.sin(bearingRad) * moveDistance;
-    
-    const clamped = clampToRadius(newLat, newLng);
-    targetPositionRef.current = {
-      ...targetPositionRef.current,
-      latitude: clamped.latitude,
-      longitude: clamped.longitude
-    };
+            // Apply inertia only if the drag was fast enough (a "flick")
+            const velocityThreshold = 0.05; // Adjust this threshold as needed
+            const totalVelocity = Math.abs(bearingDelta) + Math.abs(latDelta) * 100 + Math.abs(lngDelta) * 100;
 
-    touchPrevRef.current = { x, y };
-  }
-};
+            if (totalVelocity > velocityThreshold) {
+                leftDragVelocityRef.current = {
+                    bearing: clampVelocity(bearingDelta * inertiaMultiplier, 8),
+                    pitch: clampVelocity(pitchDelta * inertiaMultiplier, 5),
+                    latitude: clampVelocity(latDelta * inertiaMultiplier, 0.1),
+                    longitude: clampVelocity(lngDelta * inertiaMultiplier, 0.1),
+                    zoom: 0
+                };
+            }
+        }
 
-
-  // Common drag movement logic
-  const handleDragMovement = (x, y, buttons) => {
-    const deltaX = x - (isDraggingRef.current ? dragPrevRef.current.x : touchPrevRef.current.x);
-    const deltaY = y - (isDraggingRef.current ? dragPrevRef.current.y : touchPrevRef.current.y);
-
-    if (buttons === 2) { // Right-click drag for pitch/bearing (mouse only)
-      targetViewRef.current = {
-        pitch: Math.max(0, Math.min(85, targetViewRef.current.pitch - deltaY * 0.25)),
-        bearing: targetViewRef.current.bearing - deltaX * 0.35
-      };
-    } else if (buttons === 1) { // Left-click drag or touch for rotate, forward/backward, and floating zoom
-      // Horizontal movement controls rotation (bearing)
-      targetViewRef.current = {
-        ...targetViewRef.current,
-        bearing: targetViewRef.current.bearing - deltaX * smoothnessSettings.leftDragBearingSensitivity
-      };
-
-      // Enhanced floating zoom control with vertical drag
-      isZoomDraggingRef.current = true;
-      const zoomDelta = deltaY * smoothnessSettings.verticalZoomSensitivity;
-      
-      // Update temporary zoom offset instead of actual zoom
-      tempZoomOffsetRef.current += zoomDelta;
-      
-      // Clamp the offset to the float range
-      tempZoomOffsetRef.current = Math.max(
-        -smoothnessSettings.zoomFloatRange, 
-        Math.min(smoothnessSettings.zoomFloatRange, tempZoomOffsetRef.current)
-      );
-
-      // Enhanced forward/backward movement based on bearing
-      const bearingRad = (targetViewRef.current.bearing * Math.PI) / 180;
-      const zoomFactor = Math.pow(2, viewState.zoom); 
-      const effectiveMoveSpeed = smoothnessSettings.forwardMovementSpeed / zoomFactor * 100;
-
-      const moveDistance = deltaY * effectiveMoveSpeed * 0.5;
-
-      // Calculate new position
-      const newLat = targetPositionRef.current.latitude + Math.cos(bearingRad) * moveDistance;
-      const newLng = targetPositionRef.current.longitude + Math.sin(bearingRad) * moveDistance;
-      
-      // Apply boundary check immediately
-      const clamped = clampToRadius(newLat, newLng);
-      
-      // Only update if within bounds or apply the clamped values
-      targetPositionRef.current = {
-        ...targetPositionRef.current,
-        latitude: clamped.latitude,
-        longitude: clamped.longitude
-      };
-      
-      // Add resistance when hitting boundary
-      if (clamped.isAtBoundary) {
-        // Reduce movement speed when at boundary
-        tempZoomOffsetRef.current *= 0.5;
-      }
-    }
-    
-    if (isDraggingRef.current) {
-      dragPrevRef.current = { x, y };
-    }
-  };
-
-  window.addEventListener('mousemove', handleMouseMove);
-  window.addEventListener('touchmove', handleTouchMove, { passive: false });
-  
-  return () => {
-    window.removeEventListener('mousemove', handleMouseMove);
-    window.removeEventListener('touchmove', handleTouchMove);
-  };
-}, [smoothnessSettings, viewState.zoom, ambientMovementEnabled]);
-  
-    // Enhanced mouse event handling
-    useEffect(() => {
-  const handleMouseDown = (e) => {
-    if (e.button === 0 || e.button === 2) {
-      isDraggingRef.current = true;
-      setIsDragging(true);
-      dragStartRef.current = { x: e.clientX, y: e.clientY };
-      dragPrevRef.current = { x: e.clientX, y: e.clientY };
-      leftDragVelocityRef.current = { bearing: 0, pitch: 0, latitude: 0, longitude: 0, zoom: 0 };
-      floatingVelocityRef.current = { x: 0, y: 0 }; // Reset floating velocity on drag start
-      
-      // When dragging starts, disable pin position staying
-      shouldStayAtPinPositionRef.current = false;
-      
-      // Preserve current zoom when starting drag
-      if (e.button === 0) { // Left mouse button
-        baseZoomRef.current = viewState.zoom; // Preserve current zoom
-        tempZoomOffsetRef.current = 0;
+        // Reset all drag-related state flags
+        isDraggingRef.current = false;
+        isTouchDraggingRef.current = false;
+        setIsDragging(false); // For cursor style
         isZoomDraggingRef.current = false;
-      }
-    }
-  };
-
-  const handleMouseUp = (e) => {
-    if ((e.button === 0 || e.button === 2) && isDraggingRef.current) {
-      handleDragEnd();
-    }
-  };
-
-  // Touch event handlers
-  const handleTouchStart = (e) => {
-  if (e.touches.length === 1) {
-    e.preventDefault();
-    
-    const touch = e.touches[0];
-    console.log('Touch Start:', { x: touch.clientX, y: touch.clientY });
-    isTouchDraggingRef.current = true;
-    setIsDragging(true);
-    touchStartRef.current = { x: touch.clientX, y: touch.clientY };
-    touchPrevRef.current = { x: touch.clientX, y: touch.clientY };
-    touchCountRef.current = e.touches.length;
-    
-    leftDragVelocityRef.current = { bearing: 0, pitch: 0, latitude: 0, longitude: 0, zoom: 0 };
-    floatingVelocityRef.current = { x: 0, y: 0 };
-    
-    // When touch dragging starts, disable pin position staying
-    shouldStayAtPinPositionRef.current = false;
-    
-    baseZoomRef.current = viewState.zoom;
-    tempZoomOffsetRef.current = 0;
-    isZoomDraggingRef.current = false;
-  }
-};
-
-  const handleTouchEnd = (e) => {
-  if (isTouchDraggingRef.current && e.touches.length === 0) {
-    // Calculate and apply inertia
-    console.log('Touch End');
-    if (prevViewStateRef.current && viewState) {
-      const bearingDelta = viewState.bearing - prevViewStateRef.current.bearing;
-      const latDelta = viewState.latitude - prevViewStateRef.current.latitude;
-      const lngDelta = viewState.longitude - prevViewStateRef.current.longitude;
-      
-      // Check if we're at the smooth drag zoom level
-      const isNearSmoothDragZoom = Math.abs(viewState.zoom - SMOOTH_DRAG_ZOOM_LEVEL) < 0.05;
-      
-      let zoomVelocity = 0;
-      if (isNearSmoothDragZoom) {
-        // At the smooth drag zoom level, enable smooth drag behavior
-        baseZoomRef.current = SMOOTH_DRAG_ZOOM_LEVEL;
-        // No zoom velocity - stay at this level
-        zoomVelocity = 0;
-      } else {
-        // At other zoom levels, add velocity to return to the smooth drag zoom level
-        baseZoomRef.current = viewState.zoom;
-        const zoomDiff = SMOOTH_DRAG_ZOOM_LEVEL - viewState.zoom;
-        zoomVelocity = zoomDiff * 0.05;
-      }
-      
-      leftDragVelocityRef.current = {
-        bearing: clampVelocity(bearingDelta * 1.2, 8),
-        pitch: 0,
-        latitude: clampVelocity(latDelta * 1.2, 0.1),
-        longitude: clampVelocity(lngDelta * 1.2, 0.1),
-        zoom: zoomVelocity
-      };
-    }
-    
-    isTouchDraggingRef.current = false;
-    setIsDragging(false);
-    isZoomDraggingRef.current = false;
-    tempZoomOffsetRef.current = 0;
-
-    // Update target references to current position (same as mouse drag end)
-    targetPositionRef.current = {
-      latitude: viewState.latitude,
-      longitude: viewState.longitude,
-      zoom: viewState.zoom
+        tempZoomOffsetRef.current = 0;
     };
-    targetViewRef.current = {
-      pitch: viewState.pitch,
-      bearing: viewState.bearing,
+
+    // --- MOUSE EVENT HANDLERS ---
+    const handleMouseDown = (e) => {
+        if (e.button === 0 || e.button === 2) {
+            const { latitude, longitude, zoom, pitch, bearing } = viewState;
+            if (selectedId) {
+                shouldStayAtPinPositionRef.current = false;
+            }
+            isDraggingRef.current = true;
+            setIsDragging(true);
+            dragStartRef.current = { x: e.clientX, y: e.clientY };
+            dragPrevRef.current = { x: e.clientX, y: e.clientY };
+            
+            leftDragVelocityRef.current = { bearing: 0, pitch: 0, latitude: 0, longitude: 0, zoom: 0 };
+            
+            targetPositionRef.current = { latitude, longitude, zoom: targetPositionRef.current.zoom };
+            targetViewRef.current = { pitch: targetViewRef.current.pitch, bearing };
+            baseZoomRef.current = zoom;
+        }
     };
-  }
-};
 
-  // Common drag end logic
-  const handleDragEnd = () => {
-    if (prevViewStateRef.current && viewState) {
-      const bearingDelta = viewState.bearing - prevViewStateRef.current.bearing;
-      const pitchDelta = viewState.pitch - prevViewStateRef.current.pitch;
-      const latDelta = viewState.latitude - prevViewStateRef.current.latitude;
-      const lngDelta = viewState.longitude - prevViewStateRef.current.longitude;
-      
-      const inertiaMultiplier = 1.2; // Increased for more momentum
+    const handleMouseUp = (e) => {
+        if ((e.button === 0 || e.button === 2) && isDraggingRef.current) {
+            const dx = Math.abs(e.clientX - dragStartRef.current.x);
+            const dy = Math.abs(e.clientY - dragStartRef.current.y);
+            const dragThreshold = 5;
 
-      // Check if we're at the smooth drag zoom level
-      const isNearSmoothDragZoom = Math.abs(viewState.zoom - SMOOTH_DRAG_ZOOM_LEVEL) < 0.05;
-      
-      if (isNearSmoothDragZoom) {
-        // At the smooth drag zoom level, enable smooth drag behavior
-        baseZoomRef.current = SMOOTH_DRAG_ZOOM_LEVEL;
-        // No zoom velocity - stay at this level
-        leftDragVelocityRef.current.zoom = 0;
-      } else {
-        // At other zoom levels, add velocity to return to the smooth drag zoom level
-        baseZoomRef.current = viewState.zoom;
-        const zoomDiff = SMOOTH_DRAG_ZOOM_LEVEL - viewState.zoom;
-        leftDragVelocityRef.current.zoom = zoomDiff * 0.05;
-      }
-      
-      // Clamp velocities to prevent sudden jumps
-      leftDragVelocityRef.current = {
-        bearing: clampVelocity(bearingDelta * inertiaMultiplier, 8),
-        pitch: clampVelocity(pitchDelta * inertiaMultiplier, 5),
-        latitude: clampVelocity(latDelta * inertiaMultiplier, 0.1),
-        longitude: clampVelocity(lngDelta * inertiaMultiplier, 0.1),
-        zoom: leftDragVelocityRef.current.zoom
-      };
-    }
+            if (selectedId && (dx > dragThreshold || dy > dragThreshold)) {
+                setSelectedId(null);
+                setSelectedPin(null);
+                if (hoverInfo) setHoverInfo(null);
+            }
+            commonDragEndLogic();
+        }
+    };
+
+    const handleMouseMove = (e) => {
+        if (isDraggingRef.current) {
+            handleDragMovement(e.clientX, e.clientY, e.buttons);
+        } else if (ambientMovementEnabled ) {
+            const { innerWidth, innerHeight } = window;
+            const xNorm = (e.clientX / innerWidth) * 2 - 1;
+            const yNorm = (e.clientY / innerHeight) * 2 - 1;
+            mouseInfluenceRef.current = { x: xNorm, y: yNorm };
+        }
+    };
     
-    isDraggingRef.current = false;
-    setIsDragging(false);
-    isZoomDraggingRef.current = false;
+    // --- TOUCH EVENT HANDLERS ---
+    const handleTouchStart = (e) => {
+//       const target = e.target;
+//     if (target.closest('a, button, input')) {
+//       return; // Ignore touches on UI elements
+//     }
+if (e.touches.length === 1) {
+          e.preventDefault();
+            const touch = e.touches[0];
+            const { latitude, longitude, zoom, pitch, bearing } = viewState;
+            if (selectedId) {
+                shouldStayAtPinPositionRef.current = false;
+            }
 
-    tempZoomOffsetRef.current = 0;
+            isTouchDraggingRef.current = true;
+            setIsDragging(true);
+            touchStartRef.current = { x: touch.clientX, y: touch.clientY };
+            touchPrevRef.current = { x: touch.clientX, y: touch.clientY };
 
-    targetPositionRef.current = {
-      latitude: viewState.latitude,
-      longitude: viewState.longitude,
-      zoom: viewState.zoom
+            leftDragVelocityRef.current = { bearing: 0, pitch: 0, latitude: 0, longitude: 0, zoom: 0 };
+            
+            targetPositionRef.current = { latitude, longitude, zoom: targetPositionRef.current.zoom };
+            targetViewRef.current = { pitch: targetViewRef.current.pitch, bearing };
+            baseZoomRef.current = zoom;
+        }
     };
-    targetViewRef.current = {
-      pitch: viewState.pitch,
-      bearing: viewState.bearing,
+
+    const handleTouchEnd = (e) => {
+        if (isTouchDraggingRef.current && e.changedTouches.length > 0) {
+            const touch = e.changedTouches[0];
+            const dx = Math.abs(touch.clientX - touchStartRef.current.x);
+            const dy = Math.abs(touch.clientY - touchStartRef.current.y);
+            const dragThreshold = 10;
+
+            if (selectedId && (dx > dragThreshold || dy > dragThreshold)) {
+                setSelectedId(null);
+                setSelectedPin(null);
+                if (hoverInfo) setHoverInfo(null);
+            }
+            // THIS IS THE CRITICAL FIX: We simply call the common end logic.
+            // It will handle resetting flags and calculating proper inertia.
+            commonDragEndLogic();
+        }
     };
-  };
 
-  // Mouse events
-  window.addEventListener('mousedown', handleMouseDown);
-  window.addEventListener('mouseup', handleMouseUp);
-  
-  // Touch events
-  window.addEventListener('touchstart', handleTouchStart, { passive: false });
-  window.addEventListener('touchend', handleTouchEnd, { passive: false });
-  
-  const preventDefaultContextMenu = (e) => e.preventDefault();
-  window.addEventListener('contextmenu', preventDefaultContextMenu);
+    const handleTouchMove = (e) => {
+        if (isTouchDraggingRef.current && e.touches.length === 1) {
+            e.preventDefault();
+            const touch = e.touches[0];
+            // Simulate left-click button (1) for touch drag
+            handleDragMovement(touch.clientX, touch.clientY, 1);
+        }
+    };
 
-  return () => {
-    window.removeEventListener('mousedown', handleMouseDown);
-    window.removeEventListener('mouseup', handleMouseUp);
-    window.removeEventListener('touchstart', handleTouchStart);
-    window.removeEventListener('touchend', handleTouchEnd);
-    window.removeEventListener('contextmenu', preventDefaultContextMenu);
-  };
-}, [viewState, smoothnessSettings.leftDampingFactor]);
+    // --- ATTACH AND CLEAN UP LISTENERS ---
+    const el = window;
+    const preventDefaultContextMenu = (e) => e.preventDefault();
+
+    el.addEventListener('mousedown', handleMouseDown);
+    el.addEventListener('mouseup', handleMouseUp);
+    el.addEventListener('mousemove', handleMouseMove);
+    el.addEventListener('touchstart', handleTouchStart, { passive: false });
+    el.addEventListener('touchend', handleTouchEnd, { passive: false });
+    el.addEventListener('touchmove', handleTouchMove, { passive: false });
+    el.addEventListener('contextmenu', preventDefaultContextMenu);
+
+    return () => {
+        el.removeEventListener('mousedown', handleMouseDown);
+        el.removeEventListener('mouseup', handleMouseUp);
+        el.removeEventListener('mousemove', handleMouseMove);
+        el.removeEventListener('touchstart', handleTouchStart);
+        el.removeEventListener('touchend', handleTouchEnd);
+        el.removeEventListener('touchmove', handleTouchMove);
+        el.removeEventListener('contextmenu', preventDefaultContextMenu);
+    };
+
+  }, [viewState, selectedId, hoverInfo, smoothnessSettings, ambientMovementEnabled]);
+  // ====================================================================================
+  // END OF CONSOLIDATED EVENT HANDLER HOOK
+  // ====================================================================================
+
   
     useEffect(() => {
       let meta = document.querySelector('meta[name="viewport"]');
@@ -891,8 +684,11 @@ const handleTouchMove = (e) => {
       widthMinPixels: 1,
       pickable: false
     }),
+   // Previous IconLayer configuration parts (id, data, getPosition, etc.) remain the same.
+// Replace only the onClick method.
+
     new IconLayer({
-      id: 'nationalParksIcons-' + selectedId,
+      id: 'nationalParksIcons-' + selectedId, // Your existing dynamic ID
       data: NationalParksData.features,
       pickable: true,
       getPosition: d => {
@@ -906,74 +702,102 @@ const handleTouchMove = (e) => {
         anchorY: 143
       }),
       sizeScale: 9,
-      getSize: d => (d.id === selectedId ? 15 : 8),
+      getSize: d => (d.id === selectedId ? 20 : 10),
       getColor: [255, 140, 0], 
 
-onClick: info => {
-  if (info.object) {
-    const coords = info.coordinate || info.object.geometry.coordinates;
-    if (!coords || coords.length < 2) return;      
-    const [longitude, latitude] = coords;
-    const clickedId = info.object.id;      
-    pendingIdRef.current = clickedId;
+      onClick: (info) => { // This handler is called only when a pickable object in this layer is clicked.
+        if (info.object) {
+          const objectCoords = info.object.geometry.coordinates; 
+          if (!objectCoords || objectCoords.length < 2) {
+            console.error("Invalid coordinates for pin:", info.object);
+            return;
+          }
+          // Ensure longitude and latitude are correctly extracted
+          // This handles GeoJSON Point (coords = [lng, lat]) 
+          // and the first point of a MultiPoint (coords = [[lng, lat], ...])
+          const [longitude, latitude] = (Array.isArray(objectCoords[0]) && typeof objectCoords[0][0] === 'number') 
+                                        ? objectCoords[0] 
+                                        : objectCoords;
+          
+          const clickedId = info.object.id;      
+          pendingIdRef.current = clickedId;
 
-    setSelectedPin({
-      name: info.object.properties.Name,
-      longitude,
-      latitude
-    });
+          setSelectedPin({ // For tooltip
+            name: info.object.properties.Name,
+            longitude,
+            latitude
+          });
 
-    // Set loading state
-    setIsLoading(true);
-    
-    // Clear any existing loading timeout
-    if (loadingTimeoutRef.current) {
-      clearTimeout(loadingTimeoutRef.current);
-    }
+          setIsLoading(true);
+          if (loadingTimeoutRef.current) {
+            clearTimeout(loadingTimeoutRef.current);
+          }
 
-    setHoverInfo({
-      name: info.object.properties.Name,
-      longitude,
-      latitude
-    });
+          // This setHoverInfo was in your original code. If it serves a purpose, keep it.
+          // Otherwise, selectedPin might be sufficient for tooltip/hover-like display on click.
+          setHoverInfo({
+            name: info.object.properties.Name,
+            longitude,
+            latitude
+          });
 
-    // Flag to stay at pin position during transition
-    shouldStayAtPinPositionRef.current = true;
-    setIsPinTransition(true);
+          shouldStayAtPinPositionRef.current = true; // Indicate that the view should lock onto the pin
+          setIsPinTransition(true); // Signal that a pin-specific fly-to transition is active
 
-    // Reset velocities for smooth transition
-    leftDragVelocityRef.current = { bearing: 0, pitch: 0, latitude: 0, longitude: 0, zoom: 0 };
-    floatingVelocityRef.current = { x: 0, y: 0 };
+          // Reset any ongoing camera momentum/velocity
+          leftDragVelocityRef.current = { bearing: 0, pitch: 0, latitude: 0, longitude: 0, zoom: 0 };
+          floatingVelocityRef.current = { x: 0, y: 0 };
 
-    setViewState(prev => ({
-      ...prev,
-      longitude,
-      latitude,
-      zoom: 16, 
-      pitch: 65,
-      bearing: prev.bearing ,
-      transitionDuration: 2000,
-      transitionInterpolator: new FlyToInterpolator(),
-      onTransitionEnd: () => {
-        setSelectedId(pendingIdRef.current);
-        shouldStayAtPinPositionRef.current = true;
-        
-        // Set base zoom to 16 when at pin
-        baseZoomRef.current = 16;
-        
-        loadingTimeoutRef.current = setTimeout(() => {
-          setIsLoading(false);
-          setIsPinTransition(false);
-        }, 500);
-      }            
-    }));
-  } else {
-    setHoverInfo(null);
-    setSelectedId(null);
-    setSelectedId(null);
-    shouldStayAtPinPositionRef.current = false;
-  }
-}
+          const pinTargetZoom = 16;   // Desired zoom level for pin view
+          const pinTargetPitch = 68;  // Desired pitch for pin view
+          const pinTargetBearing = -20; // Consistent bearing for a "centered" pin view
+
+          // Update target refs IMMEDIATELY. The smoothUpdate loop will use these
+          // to maintain the view after the FlyToInterpolator finishes.
+          targetPositionRef.current = {
+            latitude: latitude,
+            longitude: longitude,
+            zoom: pinTargetZoom
+          };
+          targetViewRef.current = {
+            pitch: pinTargetPitch,
+            bearing: pinTargetBearing
+          };
+
+          setViewState(prev => ({
+            ...prev, // Retain other viewState properties (e.g., width, height)
+            longitude,
+            latitude,
+            zoom: pinTargetZoom, 
+            pitch: pinTargetPitch,
+            bearing: pinTargetBearing, // Crucially, fly to this specific bearing
+            transitionDuration: 2000,
+            transitionInterpolator: new FlyToInterpolator(),
+            onTransitionEnd: () => {
+              setSelectedId(pendingIdRef.current); // Finalize selection
+              shouldStayAtPinPositionRef.current = true; // Reaffirm intention to stay at pin
+              
+              // Ensure target refs precisely match the state achieved by the transition.
+              // This is critical for the smoothUpdate loop to correctly maintain the view.
+              targetPositionRef.current = {
+                  latitude: latitude,
+                  longitude: longitude,
+                  zoom: pinTargetZoom
+              };
+              targetViewRef.current = {
+                  pitch: pinTargetPitch,
+                  bearing: pinTargetBearing
+              };
+              baseZoomRef.current = pinTargetZoom; // Set base zoom for subsequent interactions
+              
+              loadingTimeoutRef.current = setTimeout(() => {
+                setIsLoading(false);
+                setIsPinTransition(false); // Pin fly-to transition is complete
+              }, 500);
+            }            
+          }));
+        }
+      }
     })
   ].filter(Boolean);
 
@@ -998,7 +822,7 @@ onClick: info => {
           zIndex: -1, pointerEvents: 'none'
         }}
       />
-      <DeckGL
+       <DeckGL
         ref={deckRef}
         viewState={viewState}
         controller={{
@@ -1013,7 +837,7 @@ onClick: info => {
           clearColor: [0.05, 0.05, 0.05, 1.0] // Dark blue background [R, G, B, A]
         }}
         onViewStateChange={({ viewState: newDeckViewState, interactionState }) => {
-           if (!interactionState.inTransition && !isDraggingRef.current) {
+           if (!interactionState.inTransition && !isDraggingRef.current && !isTouchDraggingRef.current) {
              setViewState(newDeckViewState);
              targetPositionRef.current = {
                  latitude: newDeckViewState.latitude,
@@ -1028,13 +852,20 @@ onClick: info => {
              setViewState(newDeckViewState);
            }
         }}
+        // THIS IS THE RELEVANT PART FOR YOUR REQUEST:
         onClick={info => {
-          if (!info.object) {
-            setHoverInfo(null);
-            setSelectedId(null);
-            shouldStayAtPinPositionRef.current = false;
+          if (!info.object) { // This condition is true if you click on empty map space
+            setHoverInfo(null); // Clears hover info, if any
+            setSelectedId(null); // Clears the ID of the selected pin
+            setSelectedPin(null); // Clears the selected pin data (which hides the tooltip)
+            shouldStayAtPinPositionRef.current = false; 
+            // playInitialZoom(1000); // Go back to the default wheel-controlled view
           }
+          // If info.object *is* present, it means a pickable layer item was clicked.
+          // In that case, the IconLayer's own onClick handler (which selects the pin)
+          // would have been triggered.
         }}
+        pickingRadius={30}
       >
         <Map
           mapboxAccessToken={MAPBOX_TOKEN}
@@ -1331,77 +1162,7 @@ onClick: info => {
     onChange={(e) => setPitchSmoothness(parseFloat(e.target.value))}
   />
 </div>
-  {/* {smoothnessSettings.dynamicPitchEnabled && (
-    <>
-      <div style={{marginBottom: '6px'}}>
-        <label style={{display: 'block', marginBottom: '2px'}}>
-          Min Pitch (Zoomed Out): {smoothnessSettings.minPitchValue.toFixed(0)}°
-        </label>
-        <input
-          type="range"
-          min="0"
-          max="45"
-          step="1"
-          value={smoothnessSettings.minPitchValue}
-          onChange={(e) => setSmoothnessSettings(s => ({ 
-            ...s, 
-            minPitchValue: parseFloat(e.target.value) 
-          }))}
-        />
-      </div>
-      
-      <div style={{marginBottom: '6px'}}>
-        <label style={{display: 'block', marginBottom: '2px'}}>
-          Max Pitch (Zoomed In): {smoothnessSettings.maxPitchValue.toFixed(0)}°
-        </label>
-        <input
-          type="range"
-          min="30"
-          max="85"
-          step="1"
-          value={smoothnessSettings.maxPitchValue}
-          onChange={(e) => setSmoothnessSettings(s => ({ 
-            ...s, 
-            maxPitchValue: parseFloat(e.target.value) 
-          }))}
-        />
-      </div>
-      
-      <div style={{marginBottom: '6px'}}>
-        <label style={{display: 'block', marginBottom: '2px'}}>
-          Low Zoom Threshold: {smoothnessSettings.pitchZoomThresholdLow.toFixed(1)}
-        </label>
-        <input
-          type="range"
-          min="8"
-          max="16"
-          step="0.5"
-          value={smoothnessSettings.pitchZoomThresholdLow}
-          onChange={(e) => setSmoothnessSettings(s => ({ 
-            ...s, 
-            pitchZoomThresholdLow: parseFloat(e.target.value) 
-          }))}
-        />
-      </div>
-      
-      <div style={{marginBottom: '6px'}}>
-        <label style={{display: 'block', marginBottom: '2px'}}>
-          High Zoom Threshold: {smoothnessSettings.pitchZoomThresholdHigh.toFixed(1)}
-        </label>
-        <input
-          type="range"
-          min="13.5"
-          max="30"
-          step="0.5"
-          value={smoothnessSettings.pitchZoomThresholdHigh}
-          onChange={(e) => setSmoothnessSettings(s => ({ 
-            ...s, 
-            pitchZoomThresholdHigh: parseFloat(e.target.value) 
-          }))}
-        />
-      </div>
-    </>
-  )} */}
+  
 </div>
 
         {/* Reset Button */}
@@ -1451,27 +1212,27 @@ onClick: info => {
         </button>
       </div>
       {/* Tooltip with original styling and positioning */}
-      {selectedPin && tooltipPos && (
-  <div
-    className="tooltip tooltip-visible tooltip-animate"
-    style={{
-      position: 'absolute',
-      left: tooltipPos.x,
-      top: tooltipPos.y,
-      zIndex: 1001
-    }}
-  >
-    <strong>{selectedPin.name}</strong>
-    <a href='#' target='_blank' rel="noopener noreferrer" style={{ color: '#fff', display: 'block' }}>Discover</a>
-  </div>
-)}
+            {selectedPin && tooltipPos && ( <div className="tooltip tooltip-center-screen tooltip-visible tooltip-animate"> <strong>{selectedPin.name}</strong> <a href='#' target='_blank' rel="noopener noreferrer" style={{ color: '#fff', display: 'block' }}>Discover</a> </div> )}
+
       
       <div className='live-back-btns'>
         <ul>
           <li><a href="#" onClick={(e) => {
             e.preventDefault();
+            setSelectedId(null);  // Clear selected pin
+            setSelectedPin(null); 
+            setHoverInfo(null); 
             playInitialZoom(1000);
-          }}><img src={mapRevertIcon} alt="Map" /></a></li>
+          }}
+          onTouchEnd={(e) => {
+            e.preventDefault();
+            e.stopPropagation(); // <-- Add this
+            setSelectedId(null);
+            setSelectedPin(null);
+            setHoverInfo(null);
+            playInitialZoom(1000);
+          }}><img src={mapRevertIcon} alt="Map" /></a>
+          </li>
           <li><a href="#" target='_blank'  rel="noopener noreferrer"><img src={liveTrackIcon} alt="Live Track" /></a></li>
         </ul>
       </div>
@@ -1485,34 +1246,13 @@ onClick: info => {
         .smoothness-controls::-webkit-scrollbar-track { background: rgba(255,255,255,0.1); border-radius: 3px; }
         .smoothness-controls::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.3); border-radius: 3px; }
         .smoothness-controls::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.5); }
-        .tooltip {
-          background: rgba(0,0,0, 0.6);
-          padding: 15px 25px;
-          border-radius: 8px;
-          box-shadow: 0 6px 15px rgba(0, 0, 0, 0.3);
-          opacity: 0;
-          transition: opacity 0.3s ease-out, transform 0.3s ease-out;
-          z-index: 1001;
-          text-align: center;
-          color: white;
-        }
-        .tooltip strong { font-size: 28px; line-height: 32px; display: block; margin-bottom: 5px; }
-        .tooltip a { font-size: 16px; line-height: 20px; color: #eee; text-decoration: underline; }
-        .tooltip-visible { opacity: 1; transform: translate(-50%, -120%) scale(1); }
-        .tooltip-animate { animation: fadeInUpTooltip 0.3s ease-out; }
-        @keyframes fadeInUpTooltip {
-          0% { opacity: 0; transform: translate(-50%, -110%) scale(0.95); }
-          100% { opacity: 1; transform: translate(-50%, -120%) scale(1); }
-        }
-        @media only screen and (max-width: 992px) {
-          .tooltip strong { font-size: 22px; line-height: 26px; }
-          .tooltip a { font-size: 14px; line-height: 18px; }
-          .tooltip { padding: 10px 15px; }
-        }
-        @media only screen and (max-width: 767px) {
-          .tooltip strong { font-size: 18px; line-height: 22px; }
-          .tooltip a { font-size: 12px; line-height: 16px; }
-        }
+        .tooltip { background: rgba(0,0,0, 0.3); padding: 25px 35px; border-radius: 12px; box-shadow: 0 8px 25px rgba(0, 0, 0, 0.4); opacity: 0; transition: opacity 0.3s ease-out, transform 0.3s ease-out; z-index: 1001; text-align: center; color: white; }
+        .tooltip-center-screen { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%) scale(0.95); width: 70vw; min-height: 150px; display: flex; flex-direction: column; justify-content: center; align-items: center; }
+        .tooltip strong { font-size: 72px; line-height: 78px; display: block; margin-bottom: 15px; } .tooltip a { font-size: 18px; line-height: 22px; color: gold; text-decoration: none; padding: 8px 15px; border: 0.5px solid gold; border-radius: 5px; transition: background-color 0.2s, color 0.2s; } .tooltip a:hover { background-color: gold; color: black; }
+        .tooltip-visible { opacity: 1; } .tooltip-animate { animation: fadeInUpTooltipCentered 0.4s ease-out forwards; }
+        @keyframes fadeInUpTooltipCentered { 0% { opacity: 0; transform: translate(-50%, -45%) scale(0.95); } 100% { opacity: 1; transform: translate(-50%, -50%) scale(1); } }
+        @media only screen and (max-width: 992px) { .tooltip-center-screen { width: 70vw; padding: 20px; } .tooltip strong { font-size: 46px; line-height: 60px; margin-bottom: 10px;} .tooltip a { font-size: 16px; line-height: 20px; } }
+        @media only screen and (max-width: 767px) { .tooltip-center-screen { width: 80vw; max-width: 280px; padding: 15px; } .tooltip strong { font-size: 32px; line-height: 46px; margin-bottom: 8px;} .tooltip a { font-size: 14px; line-height: 18px; } }
       `}</style>
     </div>
   );
