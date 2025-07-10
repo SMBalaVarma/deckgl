@@ -177,6 +177,15 @@ function App() {
     isTouchDraggingRef
   });
 
+  
+  const handleZoomChange = useCallback((newZoom) => {
+  // Clear the selected pin when zoom changes
+  setSelectedId(null);
+  setSelectedPin(null);
+  setHoverInfo(null);
+  shouldStayAtPinPositionRef.current = false;
+}, []);
+
   const isZoomPitchControlEnabled = !shouldStayAtPinPositionRef.current;
   useZoomPitchControl({
     targetPositionRef,
@@ -189,7 +198,8 @@ function App() {
       maxZoom: 16.0,
       minPitch: 0,
       maxPitch: 68,
-    }
+    },
+    onZoomChange: handleZoomChange // Add this line
   });
 
   // Use the smooth camera update hook
@@ -208,6 +218,7 @@ function App() {
     shouldStayAtPinPositionRef,
     clampToRadius
   });
+
 
   // Update in the playInitialZoom function
   const playInitialZoom = (duration) => {
@@ -335,26 +346,28 @@ new IconLayer({
   }),
   sizeScale: 9,
   getSize: d => {
-    // More robust comparison - handle both string and number IDs
-    const pinId = d.id;
-    const currentSelectedId = selectedId;
-    
-    // Try multiple comparison methods
-    const isSelected = pinId === currentSelectedId || 
-                      String(pinId) === String(currentSelectedId) ||
-                      Number(pinId) === Number(currentSelectedId);
-    
-    // console.log('getSize check:', {
-    //   pinId,
-    //   currentSelectedId,
-    //   pinIdType: typeof pinId,
-    //   selectedIdType: typeof currentSelectedId,
-    //   isSelected,
-    //   resultSize: isSelected ? 20 : 10
-    // });
-    
-    return isSelected ? 20 : 10;
-  },
+  // First check if there's actually a selected ID
+  if (selectedId === null || selectedId === undefined) {
+    return 10; // Default size when nothing is selected
+  }
+  
+  const pinId = d.id;
+  
+  // Debug logging (remove after fixing)
+  console.log('Pin ID:', pinId, 'Selected ID:', selectedId, 'Types:', typeof pinId, typeof selectedId);
+  
+  // More robust comparison - handle both string and number IDs
+  const directMatch = pinId === selectedId;
+  const stringMatch = String(pinId) === String(selectedId);
+  const numberMatch = Number.isFinite(Number(pinId)) && Number.isFinite(Number(selectedId)) && 
+                     Number(pinId) === Number(selectedId);
+  
+  const isSelected = directMatch || stringMatch || numberMatch;
+  
+  console.log('Matches - Direct:', directMatch, 'String:', stringMatch, 'Number:', numberMatch, 'Final:', isSelected);
+  
+  return isSelected ? 20 : 10;
+},
   getColor: [255, 140, 0], 
   updateTriggers: {
     getSize: [selectedId]
@@ -373,19 +386,7 @@ new IconLayer({
                                     : objectCoords;
       
       const clickedId = info.object.id;
-      
-      // // Enhanced debugging
-      // console.log('=== PIN CLICK DEBUG ===');
-      // console.log('Full object:', info.object);
-      // console.log('Clicked ID:', clickedId, 'Type:', typeof clickedId);
-      // console.log('Previous selectedId:', selectedId, 'Type:', typeof selectedId);
-      // console.log('Setting pendingId to:', clickedId);
-      
-      // Store the exact ID from the clicked object
       pendingIdRef.current = clickedId;
-      
-      // SET SELECTED ID IMMEDIATELY - don't wait for transition
-      // console.log('Setting selectedId immediately to:', clickedId);
       setSelectedId(clickedId);
 
       setSelectedPin({

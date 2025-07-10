@@ -11,12 +11,14 @@ import { useEffect, useCallback, useRef } from 'react';
  * @param {React.MutableRefObject} params.targetViewRef - Ref for the target view (pitch, bearing).
  * @param {boolean} params.enabled - A flag to enable or disable the hook's functionality.
  * @param {object} params.config - Configuration for the zoom/pitch behavior.
+ * @param {Function} params.onZoomChange - Optional callback when zoom changes (for clearing selection).
  */
 const useZoomPitchControl = ({
   targetPositionRef,
   targetViewRef,
   enabled = true,
   config: userConfig = {},
+  onZoomChange = null,
 }) => {
   // Merge user config with defaults
   const config = {
@@ -54,13 +56,21 @@ const useZoomPitchControl = ({
     // Clamp the zoom to the desired min/max range
     newZoom = Math.max(config.minZoom, Math.min(config.maxZoom, newZoom));
 
-    // Calculate the corresponding pitch for the new zoom level
-    const newPitch = calculateTargetPitch(newZoom);
+    // Only proceed if zoom actually changed
+    if (newZoom !== currentZoom) {
+      // Calculate the corresponding pitch for the new zoom level
+      const newPitch = calculateTargetPitch(newZoom);
 
-    // Update the target refs. The main component's animation loop will handle the smooth transition.
-    targetPositionRef.current.zoom = newZoom;
-    targetViewRef.current.pitch = newPitch;
-  }, [config, targetPositionRef, targetViewRef, calculateTargetPitch]);
+      // Update the target refs. The main component's animation loop will handle the smooth transition.
+      targetPositionRef.current.zoom = newZoom;
+      targetViewRef.current.pitch = newPitch;
+
+      // Call the onZoomChange callback to clear selection
+      if (onZoomChange) {
+        onZoomChange(newZoom);
+      }
+    }
+  }, [config, targetPositionRef, targetViewRef, calculateTargetPitch, onZoomChange]);
 
 
   const handleWheel = useCallback((event) => {
