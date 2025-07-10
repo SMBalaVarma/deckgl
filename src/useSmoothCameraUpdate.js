@@ -125,7 +125,7 @@ const useSmoothCameraUpdate = ({
 
           } 
           // AMBIENT MOVEMENT or WHEEL CONTROL (Idle state)
-          else if (ambientMovementEnabled && !isPinTransition) {
+          else if (ambientMovementEnabled) {
             const basePitch = targetViewRef.current.pitch;
             const baseBearing = targetViewRef.current.bearing;
             const baseLatitude = targetPositionRef.current.latitude;

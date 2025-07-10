@@ -93,7 +93,7 @@ function App() {
     mouseVelocityInfluence: 0.01,
     
     // Enhanced drag settings
-    leftDampingFactor: 0.92,
+    leftDampingFactor: 0.96,
     leftDragBearingSensitivity: 0.15,
     leftSmoothFactor: 0.08,
     dragLerpFactor: 0.02,
@@ -157,7 +157,7 @@ function App() {
 
   // Initialize custom hooks
   useDragControl({
-    enabled: !isPinTransition,
+    // enabled: !isPinTransition,
     viewState,
     config: smoothnessSettings,
     targetViewRef,
@@ -177,7 +177,7 @@ function App() {
     isTouchDraggingRef
   });
 
-  const isZoomPitchControlEnabled = !isPinTransition && !shouldStayAtPinPositionRef.current;
+  const isZoomPitchControlEnabled = !shouldStayAtPinPositionRef.current;
   useZoomPitchControl({
     targetPositionRef,
     targetViewRef,
@@ -306,123 +306,134 @@ function App() {
 
   // Layers including boundary
   const layers = [
-    new PathLayer({
-      id: 'boundary-circle',
-      data: [{
-        path: generateBoundaryCircle(),
-        color: BOUNDARY_COLOR
-      }],
-      getPath: d => d.path,
-      getColor: d => d.color,
-      getWidth: 2,
-      widthMinPixels: 1,
-      pickable: false
-    }),
-
-    new IconLayer({
-      id: 'nationalParksIcons-' + selectedId,
-      data: NationalParksData.features,
-      pickable: true,
-      getPosition: d => {
-        const coords = d.geometry.coordinates;
-        return Array.isArray(coords[0]) ? coords[0] : coords;
-      },
-      getIcon: () => ({
-        url: iconUrl,
-        width: 143,
-        height: 143,
-        anchorY: 143
+      new PathLayer({
+        id: 'boundary-circle',
+        data: [{
+          path: generateBoundaryCircle(),
+          color: BOUNDARY_COLOR
+        }],
+        getPath: d => d.path,
+        getColor: d => d.color,
+        getWidth: 2,
+        widthMinPixels: 1,
+        pickable: false
       }),
-      sizeScale: 9,
-      getSize: d => (d.id === selectedId ? 20 : 10),
-      getColor: [255, 140, 0], 
+  
+      new IconLayer({
+        id: 'nationalParksIcons-' + selectedId, 
+        data: NationalParksData.features,
+        pickable: true,
+        getPosition: d => {
+          const coords = d.geometry.coordinates;
+          return Array.isArray(coords[0]) ? coords[0] : coords;
+        },
+        getIcon: () => ({
+          url: iconUrl,
+          width: 143,
+          height: 143,
+          anchorY: 143
+        }),
+        sizeScale: 9,
+        getSize: d => (d.id === selectedId ? 20 : 10),
+        getColor: [255, 140, 0], 
+  
+        onClick: (info) => { // This handler is called only when a pickable object in this layer is clicked.
+          if (info.object) {
+            const objectCoords = info.object.geometry.coordinates; 
+            if (!objectCoords || objectCoords.length < 2) {
+              console.error("Invalid coordinates for pin:", info.object);
+              return;
+            }
+            // Ensure longitude and latitude are correctly extracted
+            // This handles GeoJSON Point (coords = [lng, lat]) 
+            // and the first point of a MultiPoint (coords = [[lng, lat], ...])
+            const [longitude, latitude] = (Array.isArray(objectCoords[0]) && typeof objectCoords[0][0] === 'number') 
+                                          ? objectCoords[0] 
+                                          : objectCoords;
+            
+            const clickedId = info.object.id;      
+            pendingIdRef.current = clickedId;
+  
+            setSelectedId(clickedId);
 
-      onClick: (info) => {
-        if (info.object) {
-          const objectCoords = info.object.geometry.coordinates; 
-          if (!objectCoords || objectCoords.length < 2) {
-            console.error("Invalid coordinates for pin:", info.object);
-            return;
+            setSelectedPin({ // For tooltip
+              name: info.object.properties.Name,
+              longitude,
+              latitude
+            });
+  
+            setIsLoading(true);
+            if (loadingTimeoutRef.current) {
+              clearTimeout(loadingTimeoutRef.current);
+            }
+  
+            // This setHoverInfo was in your original code. If it serves a purpose, keep it.
+            // Otherwise, selectedPin might be sufficient for tooltip/hover-like display on click.
+            setHoverInfo({
+              name: info.object.properties.Name,
+              longitude,
+              latitude
+            });
+  
+            shouldStayAtPinPositionRef.current = true; // Indicate that the view should lock onto the pin
+            setIsPinTransition(true); // Signal that a pin-specific fly-to transition is active
+  
+            // Reset any ongoing camera momentum/velocity
+            leftDragVelocityRef.current = { bearing: 0, pitch: 0, latitude: 0, longitude: 0, zoom: 0 };
+            floatingVelocityRef.current = { x: 0, y: 0 };
+  
+            const pinTargetZoom = 16;   // Desired zoom level for pin view
+            const pinTargetPitch = 68;  // Desired pitch for pin view
+            const pinTargetBearing = -20; // Consistent bearing for a "centered" pin view
+  
+            // Update target refs IMMEDIATELY. The smoothUpdate loop will use these
+            // to maintain the view after the FlyToInterpolator finishes.
+            targetPositionRef.current = {
+              latitude: latitude,
+              longitude: longitude,
+              zoom: pinTargetZoom
+            };
+            targetViewRef.current = {
+              pitch: pinTargetPitch,
+              bearing: pinTargetBearing
+            };
+  
+            setViewState(prev => ({
+              ...prev, // Retain other viewState properties (e.g., width, height)
+              longitude,
+              latitude,
+              zoom: pinTargetZoom, 
+              pitch: pinTargetPitch,
+              bearing: pinTargetBearing, // Crucially, fly to this specific bearing
+              transitionDuration: 2000,
+              transitionInterpolator: new FlyToInterpolator(),
+              onTransitionEnd: () => {
+                // setSelectedId(pendingIdRef.current); // Finalize selection
+                shouldStayAtPinPositionRef.current = true; // Reaffirm intention to stay at pin
+                
+                // Ensure target refs precisely match the state achieved by the transition.
+                // This is critical for the smoothUpdate loop to correctly maintain the view.
+                targetPositionRef.current = {
+                    latitude: latitude,
+                    longitude: longitude,
+                    zoom: pinTargetZoom
+                };
+                targetViewRef.current = {
+                    pitch: pinTargetPitch,
+                    bearing: pinTargetBearing
+                };
+                baseZoomRef.current = pinTargetZoom; // Set base zoom for subsequent interactions
+                
+                loadingTimeoutRef.current = setTimeout(() => {
+                  setIsLoading(false);
+                  setIsPinTransition(false); // Pin fly-to transition is complete
+                }, 500);
+              }            
+            }));
           }
-          
-          const [longitude, latitude] = (Array.isArray(objectCoords[0]) && typeof objectCoords[0][0] === 'number') 
-                                        ? objectCoords[0] 
-                                        : objectCoords;
-          
-          const clickedId = info.object.id;      
-          pendingIdRef.current = clickedId;
-
-          setSelectedPin({
-            name: info.object.properties.Name,
-            longitude,
-            latitude
-          });
-
-          setIsLoading(true);
-          if (loadingTimeoutRef.current) {
-            clearTimeout(loadingTimeoutRef.current);
-          }
-
-          setHoverInfo({
-            name: info.object.properties.Name,
-            longitude,
-            latitude
-          });
-
-          shouldStayAtPinPositionRef.current = true;
-          setIsPinTransition(true);
-
-          leftDragVelocityRef.current = { bearing: 0, pitch: 0, latitude: 0, longitude: 0, zoom: 0 };
-          floatingVelocityRef.current = { x: 0, y: 0 };
-
-          const pinTargetZoom = 16;
-          const pinTargetPitch = 68;
-          const pinTargetBearing = -20;
-
-          targetPositionRef.current = {
-            latitude: latitude,
-            longitude: longitude,
-            zoom: pinTargetZoom
-          };
-          targetViewRef.current = {
-            pitch: pinTargetPitch,
-            bearing: pinTargetBearing
-          };
-
-          setViewState(prev => ({
-            ...prev,
-            longitude,
-            latitude,
-            zoom: pinTargetZoom, 
-            pitch: pinTargetPitch,
-            bearing: pinTargetBearing,
-            transitionDuration: 2000,
-            transitionInterpolator: new FlyToInterpolator(),
-            onTransitionEnd: () => {
-              setSelectedId(pendingIdRef.current);
-              shouldStayAtPinPositionRef.current = true;
-              
-              targetPositionRef.current = {
-                  latitude: latitude,
-                  longitude: longitude,
-                  zoom: pinTargetZoom
-              };
-              targetViewRef.current = {
-                  pitch: pinTargetPitch,
-                  bearing: pinTargetBearing
-              };
-              baseZoomRef.current = pinTargetZoom;
-              
-              loadingTimeoutRef.current = setTimeout(() => {
-                setIsLoading(false);
-                setIsPinTransition(false);
-              }, 500);
-            }            
-          }));
         }
-      }
-    })
-  ].filter(Boolean);
+      })
+    ].filter(Boolean);
 
   return (
     <div
